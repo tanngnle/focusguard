@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stay Focused — FocusGuard</title>
+  <link rel="stylesheet" href="../fonts/fonts.css">
+  <link rel="stylesheet" href="blocked.css">
+</head>
+<body>
+  <!-- Animated background -->
+  <div class="bg-container">
+    <div class="bg-blob blob-1"></div>
+    <div class="bg-blob blob-2"></div>
+    <div class="bg-blob blob-3"></div>
+    <div class="bg-particles" id="particles"></div>
+  </div>
+
+  <main class="main-container">
+    <!-- Blocked site message -->
+    <div class="blocked-message" id="blocked-message">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+      </svg>
+      <span>You were heading to <strong id="blocked-domain">a distracting site</strong> — stay focused!</span>
+    </div>
+
+    <!-- Timer Section -->
+    <div class="timer-wrapper">
+      <!-- Phase indicator -->
+      <div class="phase-badge" id="phase-badge">
+        <span class="phase-dot"></span>
+        <span class="phase-text" id="phase-text" aria-live="polite" aria-atomic="true">Focus Time</span>
+      </div>
+
+      <!-- Circular progress + digital clock -->
+      <div class="timer-ring-container">
+        <svg class="timer-ring" viewBox="0 0 260 260">
+          <circle class="ring-bg" cx="130" cy="130" r="120" />
+          <circle class="ring-progress" id="ring-progress" cx="130" cy="130" r="120" />
+          <!-- Glow filter -->
+          <defs>
+            <filter id="glow">
+              <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+              <feMerge>
+                <feMergeNode in="coloredBlur"/>
+                <feMergeNode in="SourceGraphic"/>
+              </feMerge>
+            </filter>
+          </defs>
+        </svg>
+        <div class="timer-display">
+          <span class="timer-digits" id="timer-digits" aria-hidden="true">25:00</span>
+          <span class="timer-phase-label" id="timer-phase-label">WORK</span>
+        </div>
+        <!-- Accessible periodic summary: updated once per minute boundary and
+             on phase changes, not every second (see blocked.js announceMinuteSummary). -->
+        <span class="sr-only" id="timer-sr-status" aria-live="polite" aria-atomic="true"></span>
+      </div>
+
+      <!-- Session progress dots -->
+      <div class="session-progress" id="session-progress">
+        <span class="session-label" id="session-label">Session 1 of 4</span>
+        <div class="session-dots" id="session-dots">
+          <span class="dot active"></span>
+          <span class="dot"></span>
+          <span class="dot"></span>
+          <span class="dot"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="controls">
+      <button class="btn-control btn-reset" id="btn-reset" title="Reset">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="1 4 1 10 7 10"></polyline>
+          <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+        </svg>
+      </button>
+      <button class="btn-control btn-start" id="btn-start" title="Start">
+        <svg class="icon-play" width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+          <polygon points="5 3 19 12 5 21 5 3"></polygon>
+        </svg>
+        <svg class="icon-pause" width="28" height="28" viewBox="0 0 24 24" fill="currentColor" style="display:none">
+          <rect x="6" y="4" width="4" height="16"></rect>
+          <rect x="14" y="4" width="4" height="16"></rect>
+        </svg>
+      </button>
+      <button class="btn-control btn-skip" id="btn-skip" title="Skip to next phase">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="5 4 15 12 5 20 5 4" fill="currentColor"></polygon>
+          <line x1="19" y1="5" x2="19" y2="19"></line>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Motivational quote -->
+    <p class="motivation" id="motivation">Great things are done by a series of small things brought together.</p>
+  </main>
+
+  <script type="module" src="blocked.js"></script>
+</body>
+</html>

@@ -1,0 +1,475 @@
+/* ═══════════════════════════════════════════════════════
+   FocusGuard — Blocked Page / Pomodoro Timer Styles
+   Premium dark UI with glassmorphism & animations
+   ═══════════════════════════════════════════════════════ */
+
+:root {
+  /* Phase colors */
+  --work-color: #2ed573;
+  --work-glow: rgba(46, 213, 115, 0.25);
+  --short-break-color: #3498ff;
+  --short-break-glow: rgba(52, 152, 255, 0.25);
+  --long-break-color: #a29bfe;
+  --long-break-glow: rgba(162, 155, 254, 0.25);
+
+  /* Current phase (set via JS) */
+  --phase-color: var(--work-color);
+  --phase-glow: var(--work-glow);
+
+  /* Base */
+  --bg-dark: #08080f;
+  --bg-card: rgba(255, 255, 255, 0.04);
+  --text-primary: #e8e8f0;
+  --text-secondary: #8888aa;
+  --text-muted: #444466;
+  --radius: 16px;
+  --transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg-dark);
+  color: var(--text-primary);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Animated Background ──────────── */
+.bg-container {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.bg-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(100px);
+  opacity: 0.35;
+  animation: blobFloat 20s ease-in-out infinite;
+}
+
+.blob-1 {
+  width: 500px;
+  height: 500px;
+  background: var(--phase-color);
+  top: -15%;
+  right: -10%;
+  animation-delay: 0s;
+  transition: background 1.5s ease;
+}
+
+.blob-2 {
+  width: 400px;
+  height: 400px;
+  background: #6c5ce7;
+  bottom: -10%;
+  left: -10%;
+  animation-delay: -7s;
+}
+
+.blob-3 {
+  width: 300px;
+  height: 300px;
+  background: var(--phase-color);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0.15;
+  animation-delay: -14s;
+  transition: background 1.5s ease;
+}
+
+@keyframes blobFloat {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25% { transform: translate(30px, -40px) scale(1.1); }
+  50% { transform: translate(-20px, 20px) scale(0.95); }
+  75% { transform: translate(15px, 35px) scale(1.05); }
+}
+
+/* ── Particles ────────────────────── */
+.bg-particles {
+  position: absolute;
+  inset: 0;
+}
+
+.particle {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  background: var(--phase-color);
+  border-radius: 50%;
+  opacity: 0;
+  animation: particleDrift linear infinite;
+  transition: background 1.5s ease;
+}
+
+@keyframes particleDrift {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0);
+  }
+  10% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  90% {
+    opacity: 0.3;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-100vh) scale(0.5);
+  }
+}
+
+/* ── Main Container ───────────────── */
+.main-container {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+  padding: 40px 20px;
+  max-width: 480px;
+  width: 100%;
+}
+
+/* ── Blocked Message ──────────────── */
+.blocked-message {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  background: var(--bg-card);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 100px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  animation: fadeSlideDown 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.blocked-message strong {
+  color: var(--phase-color);
+  font-weight: 600;
+  transition: color 1.5s ease;
+}
+
+@keyframes fadeSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Timer Wrapper ────────────────── */
+.timer-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  animation: fadeIn 0.8s ease 0.2s both;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* ── Phase Badge ──────────────────── */
+.phase-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 100px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.phase-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--phase-color);
+  box-shadow: 0 0 10px var(--phase-glow);
+  transition: background var(--transition), box-shadow var(--transition);
+  animation: pulseDot 2s ease-in-out infinite;
+}
+
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ── Timer Ring ───────────────────── */
+.timer-ring-container {
+  position: relative;
+  width: 260px;
+  height: 260px;
+}
+
+.timer-ring {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.ring-bg {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.05);
+  stroke-width: 6;
+}
+
+.ring-progress {
+  fill: none;
+  stroke: var(--phase-color);
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-dasharray: 753.98;
+  stroke-dashoffset: 0;
+  transition: stroke var(--transition), stroke-dashoffset 0.5s linear;
+  filter: url(#glow);
+}
+
+.timer-display {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.timer-digits {
+  font-family: 'Orbitron', monospace;
+  font-size: 56px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: var(--text-primary);
+  text-shadow: 0 0 30px var(--phase-glow);
+  transition: text-shadow 1.5s ease;
+  font-variant-numeric: tabular-nums;
+}
+
+.timer-phase-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--phase-color);
+  transition: color var(--transition);
+}
+
+/* ── Session Progress ─────────────── */
+.session-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.session-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.session-dots {
+  display: flex;
+  gap: 8px;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1.5px solid rgba(255, 255, 255, 0.15);
+  transition: all var(--transition);
+}
+
+.dot.active {
+  background: var(--phase-color);
+  border-color: var(--phase-color);
+  box-shadow: 0 0 10px var(--phase-glow);
+  transition: background var(--transition), border-color var(--transition), box-shadow var(--transition);
+}
+
+.dot.completed {
+  background: var(--phase-color);
+  border-color: var(--phase-color);
+  opacity: 0.5;
+}
+
+/* ── Controls ─────────────────────── */
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  animation: fadeIn 0.8s ease 0.4s both;
+}
+
+.btn-control {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  cursor: pointer;
+  transition: all var(--transition);
+  color: var(--text-primary);
+}
+
+.btn-start {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--phase-color);
+  color: var(--bg-dark);
+  box-shadow:
+    0 4px 20px var(--phase-glow),
+    0 0 60px var(--phase-glow);
+  transition: all var(--transition), background 1.5s ease;
+}
+
+.btn-start:hover {
+  transform: scale(1.08);
+  box-shadow:
+    0 6px 30px var(--phase-glow),
+    0 0 80px var(--phase-glow);
+}
+
+.btn-start:active {
+  transform: scale(0.95);
+}
+
+.btn-start .icon-play {
+  margin-left: 3px; /* visual centering for play triangle */
+}
+
+.btn-reset,
+.btn-skip {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+}
+
+.btn-reset:hover,
+.btn-skip:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  transform: scale(1.08);
+}
+
+.btn-reset:active,
+.btn-skip:active {
+  transform: scale(0.92);
+}
+
+/* ── Motivation ───────────────────── */
+.motivation {
+  font-size: 14px;
+  color: var(--text-muted);
+  text-align: center;
+  font-style: italic;
+  max-width: 360px;
+  line-height: 1.6;
+  animation: fadeIn 1s ease 0.6s both;
+}
+
+/* ── Phase Transitions ────────────── */
+body.phase-work {
+  --phase-color: var(--work-color);
+  --phase-glow: var(--work-glow);
+}
+
+body.phase-short-break {
+  --phase-color: var(--short-break-color);
+  --phase-glow: var(--short-break-glow);
+}
+
+body.phase-long-break {
+  --phase-color: var(--long-break-color);
+  --phase-glow: var(--long-break-glow);
+}
+
+/* ── Pulse animation when timer ends ── */
+@keyframes pulseRing {
+  0%, 100% { transform: rotate(-90deg) scale(1); }
+  50% { transform: rotate(-90deg) scale(1.03); }
+}
+
+.timer-ring.pulse {
+  animation: pulseRing 0.6s ease 3;
+}
+
+/* ── Responsive ───────────────────── */
+@media (max-height: 600px) {
+  .main-container {
+    gap: 16px;
+    padding: 20px;
+  }
+  .timer-ring-container {
+    width: 200px;
+    height: 200px;
+  }
+  .timer-digits {
+    font-size: 42px;
+  }
+}
+
+/* ── Screen-reader only ───────────── */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Reduced motion ────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .particle {
+    animation: none !important;
+    display: none;
+  }
+  .phase-dot {
+    animation: none;
+  }
+  .timer-ring.pulse {
+    animation: none;
+  }
+}

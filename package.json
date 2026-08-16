@@ -1,0 +1,18 @@
+{
+  "name": "focusguard",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Test tooling for the FocusGuard Chrome extension. The extension itself stays buildless — this only supports linting and tests.",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "eslint": "10.8.1",
+    "globals": "17.11.0",
+    "jsdom": "30.0.1",
+    "vitest": "4.1.10"
+  }
+}

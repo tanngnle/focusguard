@@ -1,0 +1,14 @@
+# Node tooling (tests/lint only — the extension itself ships buildless
+# straight off disk, none of this is required to "Load unpacked")
+node_modules/
+
+# Test / lint output
+test-results/
+playwright-report/
+coverage/
+.vitest/
+*.log
+
+# OS cruft
+Thumbs.db
+.DS_Store
