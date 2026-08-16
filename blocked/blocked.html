@@ -6,6 +6,7 @@
   <title>Stay Focused — FocusGuard</title>
   <link rel="stylesheet" href="../fonts/fonts.css">
   <link rel="stylesheet" href="blocked.css">
+  <link rel="stylesheet" href="blocked-chat.css">
 </head>
 <body>
   <!-- Animated background -->
@@ -99,6 +100,31 @@
     <p class="motivation" id="motivation">Great things are done by a series of small things brought together.</p>
   </main>
 
+  <!-- AI Panda Chat Overlay -->
+  <div class="chat-overlay" id="chat-overlay">
+    <div class="timer-strip" id="timer-strip"></div>
+    <div class="chat-container" id="chat-container">
+      <div class="chat-header">
+        <span class="panda-avatar" aria-hidden="true">🐼</span>
+        <div class="panda-info">
+          <span class="panda-name">Bao</span>
+          <span class="panda-mood" id="panda-mood">judging you…</span>
+        </div>
+      </div>
+      <div class="chat-messages" id="chat-messages" role="log" aria-live="polite"></div>
+      <div class="chat-input-area" id="chat-input-area">
+        <input type="text" id="chat-input" class="chat-input" placeholder="Try to explain yourself…" autocomplete="off">
+        <button id="chat-send-btn" aria-label="Send message">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <script type="module" src="blocked.js"></script>
+  <script type="module" src="blocked-chat.js"></script>
 </body>
 </html>

@@ -481,3 +481,25 @@ function createParticles() {
     container.appendChild(particle);
   }
 }
+
+// ── Timer API (for chat overlay) ───────────────────────
+// Expose minimal timer state so the chat overlay's minimized timer strip
+// can display the current time/phase without duplicating timer logic.
+window.__focusguardTimer = {
+  getDisplay: () => timerDigits.textContent,
+  getPhase: () => timerState.phase,
+  isRunning: () => timerState.isRunning,
+  getProgress: () => {
+    const now = Date.now();
+    const remaining = remainingSeconds(timerState, now);
+    return timerState.totalTime > 0 ? remaining / timerState.totalTime : 1;
+  },
+};
+
+// Reduce particles when the chat overlay is active to free GPU budget.
+document.addEventListener("panda-chat-active", () => {
+  const particles = document.querySelectorAll(".particle");
+  particles.forEach((p, i) => {
+    if (i % 2 !== 0) p.style.display = "none";
+  });
+});
