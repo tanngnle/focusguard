@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FocusGuard — Breathe</title>
+  <link rel="stylesheet" href="../fonts/fonts.css">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+      color: #e4e4e7;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .breathing-container {
+      text-align: center;
+      max-width: 500px;
+      padding: 2rem;
+    }
+
+    .panda-emoji {
+      font-size: 4rem;
+      margin-bottom: 1rem;
+      animation: float 3s ease-in-out infinite;
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-10px); }
+    }
+
+    h1 {
+      font-family: 'Orbitron', monospace;
+      font-size: 1.5rem;
+      margin-bottom: 1rem;
+      color: #a78bfa;
+    }
+
+    .breathing-circle {
+      width: 200px;
+      height: 200px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(167, 139, 250, 0.3) 0%, rgba(167, 139, 250, 0.1) 70%);
+      border: 3px solid #a78bfa;
+      margin: 2rem auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: breathe 5s ease-in-out infinite;
+    }
+
+    @keyframes breathe {
+      0%, 100% { transform: scale(1); opacity: 0.7; }
+      50% { transform: scale(1.2); opacity: 1; }
+    }
+
+    .breathing-text {
+      font-size: 1.2rem;
+      color: #e4e4e7;
+      font-weight: 500;
+    }
+
+    .timer-display {
+      font-family: 'Orbitron', monospace;
+      font-size: 3rem;
+      color: #a78bfa;
+      margin: 1rem 0;
+    }
+
+    .intention-prompt {
+      margin-top: 2rem;
+    }
+
+    .intention-prompt label {
+      display: block;
+      margin-bottom: 0.5rem;
+      color: #a1a1aa;
+      font-size: 0.9rem;
+    }
+
+    .intention-input {
+      width: 100%;
+      padding: 0.75rem;
+      border: 2px solid #3f3f46;
+      border-radius: 0.5rem;
+      background: #27272a;
+      color: #e4e4e7;
+      font-size: 1rem;
+      font-family: inherit;
+    }
+
+    .intention-input:focus {
+      outline: none;
+      border-color: #a78bfa;
+    }
+
+    .continue-btn {
+      margin-top: 2rem;
+      padding: 1rem 2rem;
+      background: #a78bfa;
+      color: #1a1a2e;
+      border: none;
+      border-radius: 0.5rem;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      opacity: 0.5;
+      pointer-events: none;
+      transition: all 0.3s ease;
+    }
+
+    .continue-btn.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .continue-btn.active:hover {
+      background: #c4b5fd;
+      transform: translateY(-2px);
+    }
+
+    .blocked-domain {
+      margin-top: 1rem;
+      font-size: 0.85rem;
+      color: #71717a;
+    }
+
+    .blocked-domain strong {
+      color: #a78bfa;
+    }
+  </style>
+</head>
+<body>
+  <div class="breathing-container">
+    <div class="panda-emoji">🐼</div>
+    <h1>Take a moment to breathe</h1>
+
+    <div class="breathing-circle">
+      <span class="breathing-text" id="breathing-text">Breathe in...</span>
+    </div>
+
+    <div class="timer-display" id="timer-display">5</div>
+
+    <div class="intention-prompt">
+      <label for="intention">What's your intention for visiting this site?</label>
+      <input
+        type="text"
+        id="intention"
+        class="intention-input"
+        placeholder="e.g., Watch a specific tutorial, check messages..."
+        autocomplete="off"
+      >
+    </div>
+
+    <button class="continue-btn" id="continue-btn">Continue to site</button>
+
+    <div class="blocked-domain">
+      You were trying to visit <strong id="domain-display">...</strong>
+    </div>
+  </div>
+
+  <script type="module" src="breathing.js"></script>
+</body>
+</html>
