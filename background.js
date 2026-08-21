@@ -5,6 +5,7 @@
     ═══════════════════════════════════════════════════════ */
 
 import { matchSite } from "./lib/matcher.js";
+import { getFrictionConfig } from "./lib/friction-rules.js";
 
 // Default settings
 const DEFAULTS = {
@@ -82,8 +83,29 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     const matchedSite = matchSite(details.url, cache.sites);
     if (!matchedSite) return;
 
-    const blockedPageUrl = chrome.runtime.getURL("blocked/blocked.html");
-    const redirectUrl = `${blockedPageUrl}?domain=${encodeURIComponent(matchedSite.domain)}`;
+    // Determine intervention mode (strip vs block)
+    const interventionMode = matchedSite.interventionMode || "strip";
+
+    // If in strip mode, don't redirect — let content script handle it
+    if (interventionMode === "strip") {
+      return;
+    }
+
+    // Get friction level (default to 3 for backward compatibility)
+    const frictionLevel = matchedSite.frictionLevel || 3;
+    const frictionConfig = getFrictionConfig(frictionLevel);
+
+    let redirectUrl;
+
+    if (frictionConfig.type === "interstitial") {
+      // Level 1: Breathing delay
+      const breathingPageUrl = chrome.runtime.getURL("blocked/breathing.html");
+      redirectUrl = `${breathingPageUrl}?domain=${encodeURIComponent(matchedSite.domain)}&delay=${frictionConfig.delaySeconds}`;
+    } else {
+      // Level 3: Hard block (redirect to Pomodoro timer)
+      const blockedPageUrl = chrome.runtime.getURL("blocked/blocked.html");
+      redirectUrl = `${blockedPageUrl}?domain=${encodeURIComponent(matchedSite.domain)}`;
+    }
 
     try {
       // Use chrome.tabs.update to redirect

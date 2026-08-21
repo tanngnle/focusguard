@@ -4,6 +4,8 @@
     ═══════════════════════════════════════════════════════ */
 
 import { normalizeDomain, isValidDomain } from "../lib/domain.js";
+import { getAvailableElements } from "../lib/stripping-rules.js";
+import { getFrictionConfig } from "../lib/friction-rules.js";
 
 document.addEventListener("DOMContentLoaded", init);
 
@@ -317,15 +319,95 @@ function buildSiteCard(site) {
     </svg>
   `;
 
+  // ── Intervention Mode Toggle ──────────────────────────
+  // Strip (default) vs Block. Shown as a clickable button
+  // that cycles between modes.
+  const interventionMode = site.interventionMode || "strip";
+  const modeToggle = document.createElement("div");
+  modeToggle.className = "intervention-mode-toggle";
+  const modeButton = document.createElement("button");
+  modeButton.className = "mode-button";
+  modeButton.title = `Current mode: ${interventionMode}. Click to toggle.`;
+  modeButton.setAttribute("aria-label", `Intervention mode for ${site.domain}`);
+  const modeValue = document.createElement("span");
+  modeValue.className = "mode-value";
+  modeValue.textContent = interventionMode;
+  modeButton.appendChild(modeValue);
+  modeToggle.appendChild(modeButton);
+
   card.appendChild(favicon);
   card.appendChild(domainLabel);
   card.appendChild(toggleLabel);
+  card.appendChild(modeToggle);
   card.appendChild(deleteBtn);
+
+  // ─ Friction Level Selector ───────────────────────────
+  // Only shown when in block mode. Levels 1, 2, 3.
+  if (interventionMode === "block") {
+    const frictionLevel = site.frictionLevel || 3;
+    const frictionSelect = document.createElement("select");
+    frictionSelect.className = "friction-level-select";
+    frictionSelect.setAttribute("aria-label", `Friction level for ${site.domain}`);
+
+    [1, 2, 3].forEach((level) => {
+      const option = document.createElement("option");
+      option.value = level;
+      option.textContent = `Level ${level}: ${getFrictionConfig(level).description}`;
+      option.selected = level === frictionLevel;
+      frictionSelect.appendChild(option);
+    });
+
+    frictionSelect.addEventListener("change", () =>
+      queueSiteMutation(() => setFrictionLevel(site.domain, parseInt(frictionSelect.value)))
+    );
+
+    card.appendChild(frictionSelect);
+  }
+
+  // ── Element-Level Toggles (Stripping Profile) ─────────
+  // Only shown for supported platforms (YouTube, Facebook)
+  // when in strip mode.
+  const availableElements = getAvailableElements(site.domain);
+  if (availableElements && interventionMode === "strip") {
+    const elementToggles = document.createElement("div");
+    elementToggles.className = "element-toggles";
+    const profile = site.strippingProfile || {};
+
+    availableElements.forEach((elementName) => {
+      const label = document.createElement("label");
+      label.className = "element-toggle";
+      label.dataset.element = elementName;
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = profile[elementName] !== false; // default: enabled
+      checkbox.setAttribute("aria-label", `Toggle ${elementName} for ${site.domain}`);
+
+      const elementLabel = document.createElement("span");
+      elementLabel.className = "element-label";
+      elementLabel.textContent = formatElementName(elementName);
+
+      label.appendChild(checkbox);
+      label.appendChild(elementLabel);
+      elementToggles.appendChild(label);
+
+      checkbox.addEventListener("change", () =>
+        queueSiteMutation(() => toggleElement(site.domain, elementName, checkbox.checked))
+      );
+    });
+
+    card.appendChild(elementToggles);
+  }
 
   // Toggle handler — keyed by domain, not index (see toggleSite), and
   // queued (see queueSiteMutation) so two rapid toggles can't race.
   toggle.addEventListener("change", () =>
     queueSiteMutation(() => toggleSite(site.domain, toggle.checked))
+  );
+
+  // Intervention mode handler — cycles between strip and block
+  modeButton.addEventListener("click", () =>
+    queueSiteMutation(() => toggleInterventionMode(site.domain, interventionMode))
   );
 
   // Delete handler — keyed by domain, not index (see removeSite), and
@@ -336,6 +418,15 @@ function buildSiteCard(site) {
   });
 
   return card;
+}
+
+// ── Format Element Name ─────────────────────────────────
+// Converts camelCase element names to readable labels.
+function formatElementName(name) {
+  return name
+    .replace(/([A-Z])/g, " $1")
+    .replace(/^./, (s) => s.toUpperCase())
+    .trim();
 }
 
 // ── Toggle Site ─────────────────────────────────────────
@@ -378,6 +469,62 @@ async function removeSite(domain) {
     return;
   }
   renderSites(sites);
+}
+
+// ── Toggle Intervention Mode ────────────────────────────
+// Cycles between 'strip' and 'block' modes for a site.
+async function toggleInterventionMode(domain, currentMode) {
+  const data = await chrome.storage.sync.get(["sites"]);
+  const sites = data.sites || [];
+  const site = sites.find((s) => s.domain === domain);
+  if (!site) return;
+
+  site.interventionMode = currentMode === "strip" ? "block" : "strip";
+  suppressNextSitesChange = true;
+  const ok = await setStorage({ sites });
+  if (!ok) {
+    suppressNextSitesChange = false;
+    return;
+  }
+
+  // Re-render to show updated mode and element toggles
+  renderSites(sites);
+}
+
+// ── Toggle Element ──────────────────────────────────────
+// Updates the stripping profile for a specific element on a site.
+async function toggleElement(domain, elementName, enabled) {
+  const data = await chrome.storage.sync.get(["sites"]);
+  const sites = data.sites || [];
+  const site = sites.find((s) => s.domain === domain);
+  if (!site) return;
+
+  if (!site.strippingProfile) {
+    site.strippingProfile = {};
+  }
+  site.strippingProfile[elementName] = enabled;
+
+  suppressNextSitesChange = true;
+  const ok = await setStorage({ sites });
+  if (!ok) {
+    suppressNextSitesChange = false;
+  }
+}
+
+// ─ Set Friction Level ──────────────────────────────────
+// Updates the friction level for a site (1, 2, or 3).
+async function setFrictionLevel(domain, level) {
+  const data = await chrome.storage.sync.get(["sites"]);
+  const sites = data.sites || [];
+  const site = sites.find((s) => s.domain === domain);
+  if (!site) return;
+
+  site.frictionLevel = level;
+  suppressNextSitesChange = true;
+  const ok = await setStorage({ sites });
+  if (!ok) {
+    suppressNextSitesChange = false;
+  }
 }
 
 // ── CSS Escape (for attribute selectors) ────────────────

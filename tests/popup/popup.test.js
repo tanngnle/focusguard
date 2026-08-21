@@ -232,3 +232,99 @@ describe("popup.js — C3: rapid-succession delete keyed by domain", () => {
     });
   });
 });
+
+describe("popup.js — intervention mode", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("renders strip/block toggle for each site card", async () => {
+    await mountPopup({
+      enabled: true,
+      sites: [
+        { domain: "youtube.com", active: true, interventionMode: "strip" },
+        { domain: "twitter.com", active: true, interventionMode: "block" },
+      ],
+    });
+
+    const youtubeCard = document.querySelector('.site-card[data-domain="youtube.com"]');
+    const twitterCard = document.querySelector('.site-card[data-domain="twitter.com"]');
+
+    // Each card should have an intervention mode toggle
+    const youtubeModeToggle = youtubeCard.querySelector('.intervention-mode-toggle');
+    const twitterModeToggle = twitterCard.querySelector('.intervention-mode-toggle');
+
+    expect(youtubeModeToggle).toBeTruthy();
+    expect(twitterModeToggle).toBeTruthy();
+
+    // YouTube should show "strip" as selected
+    const youtubeModeValue = youtubeModeToggle.querySelector('.mode-value');
+    expect(youtubeModeValue.textContent).toBe("strip");
+
+    // Twitter should show "block" as selected
+    const twitterModeValue = twitterModeToggle.querySelector('.mode-value');
+    expect(twitterModeValue.textContent).toBe("block");
+  });
+
+  it("toggling intervention mode updates storage", async () => {
+    await mountPopup({
+      enabled: true,
+      sites: [
+        { domain: "youtube.com", active: true, interventionMode: "strip" },
+      ],
+    });
+
+    const youtubeCard = document.querySelector('.site-card[data-domain="youtube.com"]');
+    const modeToggle = youtubeCard.querySelector('.intervention-mode-toggle');
+    const modeButton = modeToggle.querySelector('.mode-button');
+
+    // Click to toggle from strip to block
+    modeButton.click();
+    await flushMicrotasks();
+
+    const data = await chrome.storage.sync.get(["sites"]);
+    const youtubeSite = data.sites.find((s) => s.domain === "youtube.com");
+    expect(youtubeSite.interventionMode).toBe("block");
+  });
+
+  it("shows element-level toggles for YouTube in strip mode", async () => {
+    await mountPopup({
+      enabled: true,
+      sites: [
+        { domain: "youtube.com", active: true, interventionMode: "strip" },
+      ],
+    });
+
+    const youtubeCard = document.querySelector('.site-card[data-domain="youtube.com"]');
+    const elementToggles = youtubeCard.querySelector('.element-toggles');
+
+    // YouTube should show element-level toggles
+    expect(elementToggles).toBeTruthy();
+
+    // Should have toggles for key elements
+    const homeFeedToggle = elementToggles.querySelector('[data-element="homeFeed"]');
+    const sidebarToggle = elementToggles.querySelector('[data-element="sidebar"]');
+    const shortsToggle = elementToggles.querySelector('[data-element="shorts"]');
+    const commentsToggle = elementToggles.querySelector('[data-element="comments"]');
+
+    expect(homeFeedToggle).toBeTruthy();
+    expect(sidebarToggle).toBeTruthy();
+    expect(shortsToggle).toBeTruthy();
+    expect(commentsToggle).toBeTruthy();
+  });
+
+  it("hides element-level toggles for unsupported platforms", async () => {
+    await mountPopup({
+      enabled: true,
+      sites: [
+        { domain: "twitter.com", active: true, interventionMode: "strip" },
+      ],
+    });
+
+    const twitterCard = document.querySelector('.site-card[data-domain="twitter.com"]');
+    const elementToggles = twitterCard.querySelector('.element-toggles');
+
+    // Twitter doesn't have a stripping template yet, so no element toggles
+    expect(elementToggles).toBeNull();
+  });
+});

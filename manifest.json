@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FocusGuard",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "minimum_chrome_version": "138",
   "description": "Block distracting websites and replace them with a beautiful Pomodoro timer to help you stay focused.",
   "permissions": [
@@ -26,6 +26,17 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.youtube.com/*",
+        "*://*.facebook.com/*"
+      ],
+      "js": ["content/stripping.js", "content/reintervention.js"],
+      "run_at": "document_idle",
+      "type": "module"
+    }
+  ],
   "web_accessible_resources": [
     {
       "resources": [
@@ -34,6 +45,8 @@
         "blocked/blocked.js",
         "blocked/blocked-chat.js",
         "blocked/blocked-chat.css",
+        "blocked/breathing.html",
+        "blocked/breathing.js",
         "lib/panda-agent.js"
       ],
       "matches": ["<all_urls>"]

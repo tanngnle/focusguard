@@ -28,7 +28,7 @@ describe("background.js — navigation blocking", () => {
   it("redirects a blocked-domain navigation to blocked.html with the matched domain", async () => {
     await chrome.storage.sync.set({
       enabled: true,
-      sites: [{ domain: "reddit.com", active: true }],
+      sites: [{ domain: "reddit.com", active: true, interventionMode: "block" }],
     });
     await loadBackground();
 
@@ -46,7 +46,7 @@ describe("background.js — navigation blocking", () => {
   it("the redirect URL contains no dead url= parameter", async () => {
     await chrome.storage.sync.set({
       enabled: true,
-      sites: [{ domain: "reddit.com", active: true }],
+      sites: [{ domain: "reddit.com", active: true, interventionMode: "block" }],
     });
     await loadBackground();
 
@@ -139,7 +139,7 @@ describe("background.js — cache coherence via storage.onChanged", () => {
 
     // Write new sites via storage.set — the onChanged listener should update
     // the in-memory cache synchronously, no further get() needed.
-    await chrome.storage.sync.set({ sites: [{ domain: "reddit.com", active: true }] });
+    await chrome.storage.sync.set({ sites: [{ domain: "reddit.com", active: true, interventionMode: "block" }] });
 
     // No additional storage.get calls should have happened as a result of
     // that write or the cache update.
