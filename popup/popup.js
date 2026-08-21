@@ -6,6 +6,17 @@
 import { normalizeDomain, isValidDomain } from "../lib/domain.js";
 import { getAvailableElements } from "../lib/stripping-rules.js";
 import { getFrictionConfig } from "../lib/friction-rules.js";
+import {
+  start,
+  pause,
+  reset,
+  skip,
+  remainingSeconds,
+  formatTime,
+  isStateFresh,
+  reviveState,
+} from "../lib/timer.js";
+import { createFlipClock } from "../lib/flip-clock.js";
 
 document.addEventListener("DOMContentLoaded", init);
 
@@ -28,6 +39,24 @@ const workValue = document.getElementById("work-value");
 const shortBreakValue = document.getElementById("short-break-value");
 const longBreakValue = document.getElementById("long-break-value");
 const roundsValue = document.getElementById("rounds-value");
+
+// ── Tabs (Blocklist / Timer) ────────────────────────────
+const tabBtnSites = document.getElementById("tab-btn-sites");
+const tabBtnTimer = document.getElementById("tab-btn-timer");
+const tabPanelSites = document.getElementById("tab-panel-sites");
+const tabPanelTimer = document.getElementById("tab-panel-timer");
+
+// ── Timer Tab DOM ───────────────────────────────────────
+const popupFlipClockMount = document.getElementById("popup-flip-clock");
+const popupTimerDigits = document.getElementById("popup-timer-digits");
+const popupPhaseLabel = document.getElementById("popup-phase-label");
+const popupSessionLabel = document.getElementById("popup-session-label");
+const popupSessionDots = document.getElementById("popup-session-dots");
+const timerStartBtn = document.getElementById("timer-start-btn");
+const timerPauseBtn = document.getElementById("timer-pause-btn");
+const timerSkipBtn = document.getElementById("timer-skip-btn");
+const timerResetBtn = document.getElementById("timer-reset-btn");
+const openFullTimerBtn = document.getElementById("open-full-timer-btn");
 
 // Guard so our own writes don't trigger a redundant re-render via
 // chrome.storage.onChanged (see "Storage Sync" section below).
@@ -57,6 +86,43 @@ function queueSiteMutation(fn) {
   return run;
 }
 
+// ── Timer State Mutation Queue ──────────────────────────
+// The popup and the blocked page share one timer state in
+// chrome.storage.local["focusguard_timer_state"]. Every popup write goes
+// through this queue (same read-modify-write race as the sites array:
+// two rapid Start/Skip clicks must not clobber each other) and mirrors
+// the queueSiteMutation pattern above.
+const TIMER_STATE_KEY = "focusguard_timer_state";
+let timerMutationQueue = Promise.resolve();
+function queueTimerMutation(fn) {
+  const run = timerMutationQueue.then(fn, fn);
+  timerMutationQueue = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
+// Value-based self-write suppression for the local timer-state area:
+// the `savedAt` of the last state THIS popup persisted. An onChanged event
+// carrying that exact value is our own write echoing back — skip re-render
+// only for it, so an external write (e.g. a blocked-page heartbeat)
+// landing between flag-set and our own write is never swallowed.
+let lastWrittenTimerSavedAt = null;
+
+// In-memory view of the shared timer state + flip clock instance.
+let popupTimerState = null;
+let popupFlipClock = null;
+let popupTickerHandle = null;
+// False until ANY state has been persisted (by the popup or the blocked
+// page). While false, the Timer tab renders idle defaults derived from
+// the settings sliders (reset(settings)), and slider changes keep
+// updating that display.
+let hasStoredTimerState = false;
+
+const PHASE_LABELS = { work: "WORK", shortBreak: "BREAK", longBreak: "LONG BREAK" };
+const TAB_STORAGE_KEY = "focusguard_active_tab";
+
 // ── Init ────────────────────────────────────────────────
 async function init() {
   const data = await chrome.storage.sync.get(null);
@@ -84,6 +150,11 @@ async function init() {
   // Render sites
   renderSites(data.sites || []);
 
+  // Tabs + Timer tab (both guarded on element existence so partial
+  // fixtures can't crash).
+  initTabs();
+  initTimerTab();
+
   // Event listeners
   addSiteBtn.addEventListener("click", () => queueSiteMutation(addSite));
   siteInput.addEventListener("keydown", (e) => {
@@ -103,10 +174,12 @@ async function init() {
   [workSlider, shortBreakSlider, longBreakSlider, roundsSlider].forEach((slider) => {
     slider.addEventListener("input", () => {
       updateSliderLabels();
+      refreshIdleTimerDefaults();
       savePomodoroSettingsDebounced();
     });
     slider.addEventListener("change", () => {
       updateSliderLabels();
+      refreshIdleTimerDefaults();
       savePomodoroSettingsDebounced.cancel();
       savePomodoroSettings();
     });
@@ -117,6 +190,12 @@ async function init() {
   // another popup instance). Our own writes are flagged so we don't
   // immediately re-render on top of our own optimistic UI update.
   chrome.storage.onChanged.addListener((changes, areaName) => {
+    // Local area carries the shared timer state (written by the blocked
+    // page and by this popup's Timer tab).
+    if (areaName === "local") {
+      handleTimerStateChange(changes);
+      return;
+    }
     if (areaName !== "sync") return;
 
     if (changes.sites) {
@@ -139,9 +218,264 @@ async function init() {
         longBreakSlider.value = next.longBreak;
         roundsSlider.value = next.roundsBeforeLong;
         updateSliderLabels();
+        refreshIdleTimerDefaults();
       }
     }
   });
+}
+
+// ── Tabs ──────────────────────────────────────────────
+// Two tabs: Blocklist (sites) and Timer. Header + master toggle stay
+// outside the tabs. The last active tab is persisted in localStorage.
+function initTabs() {
+  if (!tabBtnSites || !tabBtnTimer || !tabPanelSites || !tabPanelTimer) return;
+
+  const tabs = [tabBtnSites, tabBtnTimer];
+  const panelOf = { [tabBtnSites.id]: tabPanelSites, [tabBtnTimer.id]: tabPanelTimer };
+
+  function activateTab(tab, persist = true) {
+    tabs.forEach((t) => {
+      const selected = t === tab;
+      t.setAttribute("aria-selected", String(selected));
+      t.tabIndex = selected ? 0 : -1;
+      const panel = panelOf[t.id];
+      if (panel) panel.hidden = !selected;
+    });
+    if (persist) {
+      try {
+        window.localStorage.setItem(TAB_STORAGE_KEY, tab.id);
+      } catch {
+        // Storage unavailable (private mode etc.) — tabs still work.
+      }
+    }
+  }
+
+  tabs.forEach((tab, index) => {
+    tab.addEventListener("click", () => activateTab(tab));
+    tab.addEventListener("keydown", (e) => {
+      let target = null;
+      if (e.key === "ArrowRight") {
+        target = tabs[(index + 1) % tabs.length];
+      } else if (e.key === "ArrowLeft") {
+        target = tabs[(index - 1 + tabs.length) % tabs.length];
+      } else if (e.key === "Home") {
+        target = tabs[0];
+      } else if (e.key === "End") {
+        target = tabs[tabs.length - 1];
+      }
+      if (!target) return;
+      e.preventDefault();
+      activateTab(target);
+      target.focus();
+    });
+  });
+
+  // Restore the last active tab; default is Blocklist.
+  let savedTab = null;
+  try {
+    savedTab = window.localStorage.getItem(TAB_STORAGE_KEY);
+  } catch {
+    // Ignore — fall through to the default.
+  }
+  const restored = tabs.find((t) => t.id === savedTab) || tabBtnSites;
+  activateTab(restored, false);
+}
+
+// ── Timer Tab ─────────────────────────────────────────
+// Reads/writes the SAME storage key/shape the blocked page uses
+// (blocked.js saveState(): { ...timerState, savedAt }). All writes are
+// serialized through queueTimerMutation; external changes arrive via the
+// chrome.storage.onChanged listener registered in init().
+async function initTimerTab() {
+  if (!popupFlipClockMount || !timerStartBtn) return;
+
+  popupFlipClock = createFlipClock(popupFlipClockMount);
+
+  // Restore whatever the blocked page (or a previous popup) persisted.
+  try {
+    const data = await chrome.storage.local.get([TIMER_STATE_KEY]);
+    const stored = data[TIMER_STATE_KEY];
+    // 2h staleness gate (shared STALE_MS via isStateFresh, same as the
+    // blocked page) — never surface, and never re-persist, a stale session.
+    if (isStateFresh(stored, Date.now())) {
+      // Adoption race: a concurrent onChanged event may already have
+      // applied a FRESHER state while this storage.get was in flight —
+      // only adopt if nothing newer is already in memory.
+      if (!popupTimerState || (stored.savedAt ?? 0) >= (popupTimerState.savedAt ?? 0)) {
+        // reviveState also advances one phase if the running deadline
+        // already passed while the popup was closed (mirrors blocked.js).
+        popupTimerState = reviveState(stored, currentSettingsFromSliders(), Date.now());
+        hasStoredTimerState = true;
+      }
+    }
+  } catch {
+    // Not in extension context.
+  }
+
+  // Edge case — nothing persisted yet: idle defaults from the sliders.
+  if (!popupTimerState) {
+    popupTimerState = reset(currentSettingsFromSliders());
+  }
+  renderTimerState();
+
+  timerStartBtn.addEventListener("click", () =>
+    queueTimerMutation(() => applyTimerTransition((s) => start(s, Date.now())))
+  );
+  timerPauseBtn?.addEventListener("click", () =>
+    queueTimerMutation(() => applyTimerTransition((s) => pause(s, Date.now())))
+  );
+  timerSkipBtn?.addEventListener("click", () =>
+    queueTimerMutation(() =>
+      applyTimerTransition((s) => skip(s, currentSettingsFromSliders(), Date.now()))
+    )
+  );
+  timerResetBtn?.addEventListener("click", () =>
+    queueTimerMutation(() => applyTimerTransition(() => reset(currentSettingsFromSliders())))
+  );
+  openFullTimerBtn?.addEventListener("click", () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL("blocked/blocked.html") });
+  });
+
+  // Popup closing — stop the local repaint ticker.
+  window.addEventListener("pagehide", disarmPopupTicker);
+}
+
+// Settings as currently shown on the sliders (the popup's source of
+// truth for durations — mirrors savePomodoroSettings).
+function currentSettingsFromSliders() {
+  return {
+    workDuration: parseInt(workSlider?.value ?? 25, 10),
+    shortBreak: parseInt(shortBreakSlider?.value ?? 5, 10),
+    longBreak: parseInt(longBreakSlider?.value ?? 15, 10),
+    roundsBeforeLong: parseInt(roundsSlider?.value ?? 4, 10),
+  };
+}
+
+// Apply a pure lib/timer.js transition to the freshest known state and
+// persist the result. Reads storage first so a blocked-page write that
+// landed after the popup opened is never clobbered by a stale copy.
+async function applyTimerTransition(transition) {
+  let source = popupTimerState;
+  try {
+    const data = await chrome.storage.local.get([TIMER_STATE_KEY]);
+    if (data[TIMER_STATE_KEY]) source = data[TIMER_STATE_KEY];
+  } catch {
+    // Fall back to the in-memory state.
+  }
+  if (!source) source = reset(currentSettingsFromSliders());
+
+  const next = transition(source);
+
+  const savedAt = Date.now();
+  lastWrittenTimerSavedAt = savedAt; // suppress this write's onChanged echo
+  try {
+    await chrome.storage.local.set({
+      [TIMER_STATE_KEY]: { ...next, savedAt },
+    });
+  } catch {
+    return;
+  }
+  popupTimerState = next;
+  hasStoredTimerState = true;
+  renderTimerState();
+}
+
+// chrome.storage.onChanged (local area) handler — re-render when the
+// blocked page (or another popup) changes the shared timer state.
+function handleTimerStateChange(changes) {
+  const change = changes[TIMER_STATE_KEY];
+  if (!change || !change.newValue) return;
+  const incoming = change.newValue;
+  // Our own applyTimerTransition() write echoing back — identifiable by
+  // the exact `savedAt` we wrote (see lastWrittenTimerSavedAt).
+  if (incoming.savedAt != null && incoming.savedAt === lastWrittenTimerSavedAt) return;
+  popupTimerState = incoming;
+  hasStoredTimerState = true;
+  renderTimerState();
+}
+
+// While nothing has been persisted yet, the Timer tab mirrors the
+// sliders — recompute the idle display when settings move.
+function refreshIdleTimerDefaults() {
+  if (hasStoredTimerState || !popupTimerState || popupTimerState.isRunning) return;
+  popupTimerState = reset(currentSettingsFromSliders());
+  renderTimerState();
+}
+
+// ── Timer Tab Rendering ───────────────────────────────
+function renderTimerState() {
+  if (!popupTimerState) return;
+
+  paintTimerReadout();
+
+  if (popupPhaseLabel) {
+    popupPhaseLabel.textContent = PHASE_LABELS[popupTimerState.phase] || PHASE_LABELS.work;
+  }
+  if (popupSessionLabel) {
+    popupSessionLabel.textContent = `Session ${popupTimerState.currentRound} of ${popupTimerState.totalRounds}`;
+  }
+  renderPopupSessionDots();
+
+  if (popupTimerState.isRunning) {
+    armPopupTicker();
+  } else {
+    disarmPopupTicker();
+  }
+}
+
+// Deadline-based repaint — recomputes remaining from endsAt every call,
+// so the 1s ticker is only a repaint trigger, never the clock itself.
+function paintTimerReadout() {
+  const display = formatTime(remainingSeconds(popupTimerState, Date.now()));
+  if (popupFlipClock) popupFlipClock.setTime(display);
+  if (popupTimerDigits) popupTimerDigits.textContent = display;
+}
+
+function renderPopupSessionDots() {
+  if (!popupSessionDots) return;
+  popupSessionDots.innerHTML = "";
+  for (let i = 1; i <= popupTimerState.totalRounds; i++) {
+    const dot = document.createElement("span");
+    dot.className = "popup-dot";
+    if (i < popupTimerState.currentRound) {
+      dot.classList.add("completed");
+    } else if (i === popupTimerState.currentRound) {
+      dot.classList.add("active");
+    }
+    popupSessionDots.appendChild(dot);
+  }
+}
+
+// ── Popup Ticker (repaint only, while running) ──────────
+function armPopupTicker() {
+  disarmPopupTicker();
+  popupTickerHandle = setInterval(() => {
+    if (!popupTimerState || !popupTimerState.isRunning) {
+      disarmPopupTicker();
+      return;
+    }
+    const now = Date.now();
+    if (remainingSeconds(popupTimerState, now) <= 0) {
+      // Deadline passed while the popup is open (or a restored state's
+      // endsAt was already past): run the same completion transition the
+      // blocked page uses — skip into the next phase, paused — queued so
+      // it can't race a concurrent control click. renderTimerState() from
+      // the applied transition disarms/re-arms the ticker as appropriate.
+      disarmPopupTicker();
+      queueTimerMutation(() =>
+        applyTimerTransition((s) => skip(s, currentSettingsFromSliders(), now))
+      );
+      return;
+    }
+    paintTimerReadout();
+  }, 1000);
+}
+
+function disarmPopupTicker() {
+  if (popupTickerHandle != null) {
+    clearInterval(popupTickerHandle);
+    popupTickerHandle = null;
+  }
 }
 
 // ── Debounce Helper ─────────────────────────────────────
@@ -252,14 +586,19 @@ function hashString(str) {
   return Math.abs(hash);
 }
 
+const AVATAR_HUES = [140, 213, 245];
+
 function buildAvatar(domain) {
   const avatar = document.createElement("div");
   avatar.className = "site-favicon";
   avatar.setAttribute("aria-hidden", "true");
 
-  const hue = hashString(domain) % 360;
-  avatar.style.background = `hsl(${hue}, 55%, 32%)`;
-  avatar.style.color = `hsl(${hue}, 85%, 88%)`;
+  // Phase C — minimalist scheme: only the three muted phase hues
+  // (work green / short-break blue / long-break violet), still
+  // deterministic per domain.
+  const hue = AVATAR_HUES[hashString(domain) % AVATAR_HUES.length];
+  avatar.style.background = `hsl(${hue}, 30%, 20%)`;
+  avatar.style.color = `hsl(${hue}, 45%, 78%)`;
   avatar.textContent = (domain[0] || "?").toUpperCase();
 
   return avatar;
@@ -357,9 +696,14 @@ function buildSiteCard(site) {
       frictionSelect.appendChild(option);
     });
 
-    frictionSelect.addEventListener("change", () =>
-      queueSiteMutation(() => setFrictionLevel(site.domain, parseInt(frictionSelect.value)))
-    );
+    frictionSelect.addEventListener("change", () => {
+      // Capture the chosen value at event time: the queued mutation must
+      // apply exactly the user action that enqueued it, never whatever the
+      // (possibly re-rendered or replaced) control shows by the time the
+      // mutation actually runs.
+      const level = parseInt(frictionSelect.value);
+      queueSiteMutation(() => setFrictionLevel(site.domain, level));
+    });
 
     card.appendChild(frictionSelect);
   }
@@ -391,19 +735,26 @@ function buildSiteCard(site) {
       label.appendChild(elementLabel);
       elementToggles.appendChild(label);
 
-      checkbox.addEventListener("change", () =>
-        queueSiteMutation(() => toggleElement(site.domain, elementName, checkbox.checked))
-      );
+      checkbox.addEventListener("change", () => {
+        const enabled = checkbox.checked; // eager capture — see frictionSelect above
+        queueSiteMutation(() => toggleElement(site.domain, elementName, enabled));
+      });
     });
 
     card.appendChild(elementToggles);
   }
 
   // Toggle handler — keyed by domain, not index (see toggleSite), and
-  // queued (see queueSiteMutation) so two rapid toggles can't race.
-  toggle.addEventListener("change", () =>
-    queueSiteMutation(() => toggleSite(site.domain, toggle.checked))
-  );
+  // queued (see queueSiteMutation) so two rapid toggles can't race. The
+  // checkbox state is captured at event time, not when the queued mutation
+  // eventually runs: reading `toggle.checked` lazily inside the queue means
+  // a second, different toggle action landing before execution could flip
+  // what the first queued mutation writes — each queued mutation must apply
+  // exactly the user action that enqueued it.
+  toggle.addEventListener("change", () => {
+    const active = toggle.checked;
+    queueSiteMutation(() => toggleSite(site.domain, active));
+  });
 
   // Intervention mode handler — cycles between strip and block
   modeButton.addEventListener("click", () =>

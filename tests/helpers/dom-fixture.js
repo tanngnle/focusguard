@@ -47,8 +47,52 @@ export function fireDomContentLoaded() {
   document.dispatchEvent(new Event("DOMContentLoaded", { bubbles: true, cancelable: true }));
 }
 
-/** Flushes the microtask queue N times (default enough for a few chained awaits). */
-export async function flushMicrotasks(times = 6) {
+/**
+ * Installs an in-memory localStorage on window when the environment's is
+ * unusable. Newer Node runtimes expose an experimental `localStorage`
+ * global that shadows jsdom's and returns undefined unless the process
+ * was started with --localstorage-file — under Vitest's threads pool that
+ * shadow wins, so popup.js's `window.localStorage` reads come back
+ * undefined. Real Chrome always has a working localStorage, so this is
+ * strictly a test-environment shim. Returns the storage object.
+ */
+export function ensureLocalStorage() {
+  let usable = false;
+  try {
+    usable = window.localStorage != null;
+  } catch {
+    usable = false;
+  }
+  if (usable) return window.localStorage;
+
+  const store = new Map();
+  const shim = {
+    getItem: (key) => (store.has(key) ? store.get(key) : null),
+    setItem: (key, value) => store.set(key, String(value)),
+    removeItem: (key) => store.delete(key),
+    clear: () => store.clear(),
+    key: (index) => [...store.keys()][index] ?? null,
+    get length() {
+      return store.size;
+    },
+  };
+  Object.defineProperty(window, "localStorage", {
+    value: shim,
+    configurable: true,
+    writable: true,
+  });
+  return shim;
+}
+
+/**
+ * Flushes the microtask queue N times. Default is sized for queued
+ * read-modify-write chains (popup.js's queueSiteMutation): each queued
+ * mutation costs several interleaved microtask hops (storage.get await,
+ * storage.set await, queue-link reactions), so two rapid mutations need
+ * well over the "few chained awaits" that 6 covers. Over-flushing is
+ * harmless — a settled promise just resolves an already-settled promise.
+ */
+export async function flushMicrotasks(times = 20) {
   for (let i = 0; i < times; i++) {
     await Promise.resolve();
   }

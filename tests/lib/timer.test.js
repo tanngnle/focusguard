@@ -5,6 +5,10 @@ import {
   remainingSeconds,
   advancePhase,
   formatTime,
+  start,
+  pause,
+  reset,
+  skip,
 } from "../../lib/timer.js";
 
 const settings = { workDuration: 25, shortBreak: 5, longBreak: 15, roundsBeforeLong: 4 };
@@ -183,6 +187,122 @@ describe("advancePhase — full cycle", () => {
     let state = initialState(settings);
     const next = advancePhase({ ...state, isRunning: false }, settings, 0);
     expect(next.totalRounds).toBe(settings.roundsBeforeLong);
+  });
+});
+
+describe("start", () => {
+  it("starts an idle state at full phase length, anchoring endsAt to now", () => {
+    const now = 1_000_000;
+    const state = initialState(settings);
+    const next = start(state, now);
+    expect(next.isRunning).toBe(true);
+    expect(next.endsAt).toBe(now + state.totalTime * 1000);
+    expect(next.remaining).toBeNull();
+    expect(next.phase).toBe("work");
+  });
+
+  it("resumes a paused state from the frozen remaining time, not the full phase", () => {
+    const now = 1_000_000;
+    const state = { ...initialState(settings), remaining: 120 };
+    const next = start(state, now);
+    expect(next.endsAt).toBe(now + 120 * 1000);
+  });
+
+  it("falls back to totalTime when remaining is null", () => {
+    const now = 1_000_000;
+    const state = { ...initialState(settings), remaining: null };
+    const next = start(state, now);
+    expect(next.endsAt).toBe(now + state.totalTime * 1000);
+  });
+
+  it("is a no-op (returns the same state) when already running", () => {
+    const state = { ...initialState(settings), isRunning: true, endsAt: 999, remaining: null };
+    expect(start(state, 5)).toBe(state);
+  });
+
+  it("does not mutate the input state", () => {
+    const state = initialState(settings);
+    start(state, 0);
+    expect(state.isRunning).toBe(false);
+    expect(state.remaining).toBe(state.totalTime);
+  });
+});
+
+describe("pause", () => {
+  it("freezes a running state: remaining captured from the deadline, endsAt dropped", () => {
+    const now = 1_000_000;
+    const state = { ...initialState(settings), isRunning: true, endsAt: now + 45_000, remaining: null };
+    const next = pause(state, now);
+    expect(next.isRunning).toBe(false);
+    expect(next.endsAt).toBeNull();
+    expect(next.remaining).toBe(45);
+  });
+
+  it("rounds partial seconds up, matching remainingSeconds", () => {
+    const now = 1_000_000;
+    const state = { ...initialState(settings), isRunning: true, endsAt: now + 1500, remaining: null };
+    expect(pause(state, now).remaining).toBe(2);
+  });
+
+  it("on an already-paused state keeps the frozen remaining (safe no-op)", () => {
+    const state = { ...initialState(settings), remaining: 77 };
+    const next = pause(state, 9_999_999);
+    expect(next.isRunning).toBe(false);
+    expect(next.remaining).toBe(77);
+  });
+});
+
+describe("reset", () => {
+  it("returns a fresh idle work state built from settings", () => {
+    const next = reset({ workDuration: 30, shortBreak: 10, longBreak: 20, roundsBeforeLong: 3 });
+    expect(next).toEqual(initialState({ workDuration: 30, shortBreak: 10, longBreak: 20, roundsBeforeLong: 3 }));
+    expect(next.phase).toBe("work");
+    expect(next.isRunning).toBe(false);
+    expect(next.totalTime).toBe(30 * 60);
+    expect(next.totalRounds).toBe(3);
+  });
+
+  it("discards any in-progress phase/round of the previous session", () => {
+    const mid = skip(skip(initialState(settings), settings, 0), settings, 1); // into round 2 work
+    const next = reset(settings);
+    expect(next.phase).toBe("work");
+    expect(next.currentRound).toBe(1);
+    expect(next.totalTime).toBe(mid.phase === "work" ? mid.totalTime : phaseDuration("work", settings));
+  });
+});
+
+describe("skip", () => {
+  it("advances to the next phase, paused, with the new phase's full duration", () => {
+    const now = 2_000_000;
+    const next = skip(initialState(settings), settings, now);
+    expect(next.phase).toBe("shortBreak");
+    expect(next.isRunning).toBe(false);
+    expect(next.endsAt).toBeNull();
+    expect(next.remaining).toBe(5 * 60);
+  });
+
+  it("skips a RUNNING phase to a paused next phase (never keeps running)", () => {
+    const now = 2_000_000;
+    const running = start(initialState(settings), now);
+    const next = skip(running, settings, now + 5000);
+    expect(next.isRunning).toBe(false);
+    expect(next.endsAt).toBeNull();
+    expect(next.phase).toBe("shortBreak");
+  });
+
+  it("follows the same round/phase cycle as advancePhase", () => {
+    let state = initialState(settings);
+    state = skip(state, settings, 0); // work r1 -> shortBreak
+    state = skip(state, settings, 1); // shortBreak -> work r2
+    expect(state.phase).toBe("work");
+    expect(state.currentRound).toBe(2);
+  });
+
+  it("does not mutate the input state", () => {
+    const state = initialState(settings);
+    skip(state, settings, 0);
+    expect(state.phase).toBe("work");
+    expect(state.currentRound).toBe(1);
   });
 });
 

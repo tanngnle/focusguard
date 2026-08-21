@@ -7,13 +7,18 @@ import {
   initialState,
   phaseDuration,
   remainingSeconds,
-  advancePhase,
   formatTime,
+  start,
+  pause,
+  reset,
+  skip,
+  isStateFresh,
+  reviveState,
 } from "../lib/timer.js";
+import { createFlipClock } from "../lib/flip-clock.js";
 
 // ── Constants ───────────────────────────────────────────
 const STORAGE_KEY = "focusguard_timer_state";
-const STALE_MS = 2 * 60 * 60 * 1000; // discard saved state older than this
 const HEARTBEAT_MS = 10 * 1000; // persistence heartbeat while running
 
 const MOTIVATIONAL_QUOTES = [
@@ -38,6 +43,13 @@ let timerState = initialState(settings);
 let tickHandle = null;
 let heartbeatHandle = null;
 let lastAnnouncedMinute = null;
+let flipClock = null; // instantiated once at DOMContentLoaded
+// Value-based self-write suppression (ADR-0002): the `savedAt` of the last
+// state THIS page persisted. An onChanged event carrying that exact value
+// is our own write echoing back and must not trigger a re-adopt/re-render.
+// Value-based (not a bare boolean flag) so an external write — e.g. a popup
+// pause — landing between a pending save and its echo is never swallowed.
+let lastWrittenSavedAt = null;
 
 // ── DOM References ──────────────────────────────────────
 const timerDigits = document.getElementById("timer-digits");
@@ -55,6 +67,8 @@ const btnReset = document.getElementById("btn-reset");
 const btnSkip = document.getElementById("btn-skip");
 const iconPlay = btnStart.querySelector(".icon-play");
 const iconPause = btnStart.querySelector(".icon-pause");
+const flipClockMount = document.getElementById("flip-clock");
+const phaseProgressFill = document.getElementById("phase-progress-fill");
 
 // Ring geometry — read `r` off the SVG circle instead of hardcoding it, so the
 // two never desync. `strokeDasharray` is set once here rather than every tick.
@@ -81,11 +95,17 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   timerState = initialState(settings);
 
+  // Mount the flip clock (visual readout). #timer-digits stays the source
+  // of truth for window.__focusguardTimer.getDisplay().
+  if (flipClockMount) {
+    flipClock = createFlipClock(flipClockMount);
+  }
+
   // Try to restore saved timer state
   try {
     const saved = await chrome.storage.local.get([STORAGE_KEY]);
     const restored = saved[STORAGE_KEY];
-    if (restored && Date.now() - (restored.savedAt || 0) < STALE_MS) {
+    if (isStateFresh(restored, Date.now())) {
       timerState = reviveState(restored, settings, Date.now());
     }
   } catch (e) {
@@ -117,8 +137,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   [btnStart, btnReset, btnSkip].forEach((btn) => btn.addEventListener("click", unlockAudio));
 
   // B4 — react to settings changes made elsewhere (e.g. the popup) while
-  // this page is open.
-  chrome.storage.onChanged?.addListener(handleSettingsChanged);
+  // this page is open. The local-area branch (ADR-0002) adopts external
+  // writes to the shared timer state as ground truth.
+  chrome.storage.onChanged?.addListener((changes, area) => {
+    handleSettingsChanged(changes, area);
+    handleTimerStateChanged(changes, area);
+  });
 
   // B3 — persist on the ways a tab can disappear without warning.
   document.addEventListener("pagehide", saveState);
@@ -128,30 +152,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 });
 
 // ── Resume / Restore ─────────────────────────────────────
-function reviveState(restored, settings, now) {
-  let state = {
-    phase: restored.phase || "work",
-    currentRound: restored.currentRound || 1,
-    totalRounds: restored.totalRounds || settings.roundsBeforeLong,
-    totalTime: restored.totalTime || phaseDuration(restored.phase || "work", settings),
-    isRunning: !!restored.isRunning,
-    endsAt: restored.endsAt ?? null,
-    remaining: restored.remaining ?? null,
-  };
-
-  if (state.isRunning && state.endsAt != null && remainingSeconds(state, now) <= 0) {
-    // The deadline passed while the tab was closed/backgrounded-and-killed.
-    // Advance exactly one phase rather than showing a frozen 00:00 — and
-    // since it was running, advancePhase() keeps it running with a fresh
-    // deadline for the new phase. Cascading through more than one elapsed
-    // phase is intentionally not attempted.
-    state = advancePhase(state, settings, now);
-  } else if (!state.isRunning && state.remaining == null) {
-    state.remaining = state.totalTime;
-  }
-
-  return state;
-}
+// reviveState() + isStateFresh() live in lib/timer.js — shared with the
+// popup so both surfaces restore identically (ADR-0002).
 
 // ── Timer Controls ──────────────────────────────────────
 function toggleTimer() {
@@ -162,18 +164,37 @@ function toggleTimer() {
   }
 }
 
+// Space toggles the timer from anywhere on the page. Guards:
+//  - typing contexts (input/textarea/select) keep Space as a character
+//  - a focused button already activates on Space — skipping prevents a
+//    double toggle from the same keypress
+//  - while the Bao chat overlay is open, Space belongs to the chat
+function isTypingContext() {
+  const el = document.activeElement;
+  if (!el || !el.tagName) return false;
+  return (
+    el.tagName === "INPUT" ||
+    el.tagName === "TEXTAREA" ||
+    el.tagName === "SELECT" ||
+    el.tagName === "BUTTON"
+  );
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== " " && e.code !== "Space") return;
+  if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (isTypingContext()) return;
+  const overlay = document.getElementById("chat-overlay");
+  if (overlay && overlay.classList.contains("open")) return;
+
+  e.preventDefault(); // stop page scroll / late button activation
+  toggleTimer();
+});
+
 function startTimer() {
   if (timerState.isRunning) return;
 
-  const now = Date.now();
-  const remaining = timerState.remaining != null ? timerState.remaining : timerState.totalTime;
-
-  timerState = {
-    ...timerState,
-    isRunning: true,
-    endsAt: now + remaining * 1000,
-    remaining: null,
-  };
+  timerState = start(timerState, Date.now());
 
   updatePlayPauseIcon();
   armTicker();
@@ -183,22 +204,19 @@ function startTimer() {
 }
 
 function pauseTimer() {
-  const now = Date.now();
-  const remaining = remainingSeconds(timerState, now);
-
-  timerState = { ...timerState, isRunning: false, endsAt: null, remaining };
+  timerState = pause(timerState, Date.now());
 
   disarmTicker();
   disarmHeartbeat();
   updatePlayPauseIcon();
-  renderTime(remaining);
+  renderTime(timerState.remaining);
   saveState();
 }
 
 function resetTimer() {
   disarmTicker();
   disarmHeartbeat();
-  timerState = initialState(settings); // B5 — re-reads durations/totalRounds from settings
+  timerState = reset(settings); // B5 — re-reads durations/totalRounds from settings
   applyPhaseUI();
   saveState();
 }
@@ -207,7 +225,7 @@ function skipPhase() {
   const now = Date.now();
   disarmTicker();
   disarmHeartbeat();
-  timerState = advancePhase({ ...timerState, isRunning: false }, settings, now);
+  timerState = skip(timerState, settings, now);
   applyPhaseUI();
   saveState();
 }
@@ -248,7 +266,7 @@ function tick() {
   if (remaining <= 0) {
     playNotificationSound();
     pulseRing();
-    timerState = advancePhase({ ...timerState, isRunning: false }, settings, now);
+    timerState = skip(timerState, settings, now);
     disarmTicker();
     disarmHeartbeat();
     applyPhaseUI();
@@ -291,6 +309,43 @@ function handleSettingsChanged(changes, area) {
   saveState();
 }
 
+// ADR-0002 — external changes to the shared timer state are ground truth.
+// The popup (or another blocked tab) paused/started/skipped while this page
+// was open: adopt the written value, re-arm or disarm the ticker+heartbeat
+// to match, and re-render. Without this, the 10s heartbeat would clobber a
+// popup pause and a popup Start would be invisible until reload.
+function handleTimerStateChanged(changes, area) {
+  if (area !== "local") return;
+  const change = changes[STORAGE_KEY];
+  if (!change || !change.newValue) return;
+  const incoming = change.newValue;
+
+  // Our own saveState() echoing back — identifiable by the exact `savedAt`
+  // we wrote (see lastWrittenSavedAt).
+  if (incoming.savedAt != null && incoming.savedAt === lastWrittenSavedAt) return;
+
+  const now = Date.now();
+  timerState = reviveState(incoming, settings, now);
+
+  disarmTicker();
+  disarmHeartbeat();
+  if (timerState.isRunning) {
+    armTicker();
+    armHeartbeat();
+  }
+  applyPhaseUI();
+
+  // If revival advanced an expired running session one phase, persist the
+  // corrected state so both surfaces converge on it.
+  if (
+    incoming.isRunning &&
+    incoming.endsAt != null &&
+    remainingSeconds(incoming, now) <= 0
+  ) {
+    saveState();
+  }
+}
+
 // ── Display Updates ─────────────────────────────────────
 function applyPhaseUI() {
   const now = Date.now();
@@ -302,8 +357,11 @@ function applyPhaseUI() {
 }
 
 function renderTime(remainingSecs) {
-  timerDigits.textContent = formatTime(remainingSecs);
+  const display = formatTime(remainingSecs);
+  timerDigits.textContent = display;
+  if (flipClock) flipClock.setTime(display);
   updateRing(remainingSecs);
+  updateProgressBar(remainingSecs);
   announceMinuteSummary(remainingSecs);
 }
 
@@ -311,6 +369,15 @@ function updateRing(remainingSecs) {
   const progress = timerState.totalTime > 0 ? remainingSecs / timerState.totalTime : 1;
   const offset = RING_CIRCUMFERENCE * (1 - progress);
   ringProgress.style.strokeDashoffset = String(offset);
+}
+
+// Thin linear phase-progress bar (the SVG ring is hidden via CSS but its
+// update path above is kept — zero risk). Transform-only update, clamped.
+function updateProgressBar(remainingSecs) {
+  if (!phaseProgressFill) return;
+  const progress = timerState.totalTime > 0 ? remainingSecs / timerState.totalTime : 1;
+  const elapsed = Math.min(1, Math.max(0, 1 - progress));
+  phaseProgressFill.style.transform = `scaleX(${elapsed})`;
 }
 
 function setPhaseDisplay(phase) {
@@ -385,11 +452,13 @@ function pulseRing() {
 
 // ── Persistence ─────────────────────────────────────────
 async function saveState() {
+  const savedAt = Date.now();
+  lastWrittenSavedAt = savedAt; // suppress this write's onChanged echo
   try {
     await chrome.storage.local.set({
       [STORAGE_KEY]: {
         ...timerState,
-        savedAt: Date.now(),
+        savedAt,
       },
     });
   } catch (e) {

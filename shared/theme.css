@@ -1,0 +1,73 @@
+/* ═══════════════════════════════════════════════════════
+   FocusGuard — Shared Theme Tokens
+   ONE token sheet for every surface (blocked page, popup,
+   chat overlay, flip clock, breathing page). Minimalist
+   direction: near-black base, one neutral elevated surface,
+   flat planes, hairline borders, no glow bloom. The three
+   phase colors are the ONLY accent hues in the system.
+   Load this BEFORE any page-specific stylesheet.
+   ═══════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Phase accents (the only hues) ────────────────── */
+  --work-color: #2ed573;
+  --short-break-color: #3498ff;
+  --long-break-color: #a29bfe;
+
+  /* Glow variants exist only as low-alpha shadows — the old
+     bloom (0.25+) is gone; surfaces stay flat. */
+  --work-glow: rgba(46, 213, 115, 0.12);
+  --short-break-glow: rgba(52, 152, 255, 0.12);
+  --long-break-glow: rgba(162, 155, 254, 0.12);
+
+  /* Current phase — indirected so `body.phase-work`,
+     `body.phase-short-break`, `body.phase-long-break` on the
+     blocked page can switch every consumer at once. */
+  --phase-color: var(--work-color);
+  --phase-glow: var(--work-glow);
+
+  /* ── Neutral surfaces ─────────────────────────────── */
+  --bg-dark: #08080f;        /* near-black base */
+  --surface: #12121a;        /* the single elevated surface */
+  --surface-hover: #181822;  /* interactive state of --surface */
+  --bg-card: rgba(255, 255, 255, 0.04); /* flat veil over base */
+
+  /* ── Text ─────────────────────────────────────────── */
+  --text-primary: #e8e8f0;
+  --text-secondary: #8888aa;
+  --text-muted: #555570;
+
+  /* ── Hairline borders (1px, low-alpha white) ──────── */
+  --hairline: rgba(255, 255, 255, 0.08);
+  --hairline-faint: rgba(255, 255, 255, 0.05);
+
+  /* ── Spacing scale ────────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* ── Radii ────────────────────────────────────────── */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 100px;
+
+  /* ── Typography ───────────────────────────────────── */
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-display: 'Orbitron', monospace;
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-md: 14px;
+
+  /* ── Motion ───────────────────────────────────────── */
+  --transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── Focus ────────────────────────────────────────── */
+  /* Single keyboard-focus color for every surface: the current
+     phase accent (work green in the popup). Used with a 2px
+     outline at 2px offset — see :focus-visible rules. */
+  --focus-color: var(--phase-color);
+}

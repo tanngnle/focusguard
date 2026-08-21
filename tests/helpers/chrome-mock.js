@@ -77,6 +77,9 @@
  *     Default implementation resolves with `{ id: tabId, ...updateProperties }`.
  *     Inspect calls via chrome.tabs.update.mock.calls, or override behavior
  *     per-test with chrome.tabs.update.mockRejectedValueOnce(...) etc.
+ *   chrome.tabs.create -> vi.fn((createProperties) => Promise)
+ *     Default implementation resolves with `{ id: 9999, ...createProperties }`.
+ *     Inspect calls via chrome.tabs.create.mock.calls.
  *
  * chrome.webNavigation
  * --------------------
@@ -230,6 +233,9 @@ function buildMock() {
   const tabs = {
     update: vi.fn((tabId, updateProperties) =>
       Promise.resolve({ id: tabId, ...updateProperties })
+    ),
+    create: vi.fn((createProperties) =>
+      Promise.resolve({ id: 9999, ...createProperties })
     ),
   };
 

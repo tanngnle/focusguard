@@ -1,30 +1,9 @@
 /* ═══════════════════════════════════════════════════════
    FocusGuard — Blocked Page / Pomodoro Timer Styles
-   Premium dark UI with glassmorphism & animations
+   Minimalist dark UI — flat surfaces, hairline borders.
+   Palette lives in shared/theme.css (loaded first); this
+   sheet only adds the body.phase-* → --phase-color switch.
    ═══════════════════════════════════════════════════════ */
-
-:root {
-  /* Phase colors */
-  --work-color: #2ed573;
-  --work-glow: rgba(46, 213, 115, 0.25);
-  --short-break-color: #3498ff;
-  --short-break-glow: rgba(52, 152, 255, 0.25);
-  --long-break-color: #a29bfe;
-  --long-break-glow: rgba(162, 155, 254, 0.25);
-
-  /* Current phase (set via JS) */
-  --phase-color: var(--work-color);
-  --phase-glow: var(--work-glow);
-
-  /* Base */
-  --bg-dark: #08080f;
-  --bg-card: rgba(255, 255, 255, 0.04);
-  --text-primary: #e8e8f0;
-  --text-secondary: #8888aa;
-  --text-muted: #444466;
-  --radius: 16px;
-  --transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
 
 * {
   margin: 0;
@@ -33,7 +12,7 @@
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: var(--font-body);
   background: var(--bg-dark);
   color: var(--text-primary);
   min-height: 100vh;
@@ -52,12 +31,11 @@ body {
   overflow: hidden;
 }
 
+/* Phase C — minimalist scheme: the glow blobs and drifting
+   particles are neutralized via CSS only (markup and
+   createParticles() JS stay intact). */
 .bg-blob {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(100px);
-  opacity: 0.35;
-  animation: blobFloat 20s ease-in-out infinite;
+  display: none;
 }
 
 .blob-1 {
@@ -100,8 +78,7 @@ body {
 
 /* ── Particles ────────────────────── */
 .bg-particles {
-  position: absolute;
-  inset: 0;
+  display: none;
 }
 
 .particle {
@@ -153,10 +130,8 @@ body {
   gap: 10px;
   padding: 10px 20px;
   background: var(--bg-card);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 100px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
   font-size: 13px;
   color: var(--text-secondary);
   animation: fadeSlideDown 0.6s cubic-bezier(0.4, 0, 0.2, 1);
@@ -200,10 +175,8 @@ body {
   gap: 8px;
   padding: 6px 16px;
   background: var(--bg-card);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 100px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.5px;
@@ -215,7 +188,7 @@ body {
   height: 8px;
   border-radius: 50%;
   background: var(--phase-color);
-  box-shadow: 0 0 10px var(--phase-glow);
+  box-shadow: 0 0 6px var(--phase-glow);
   transition: background var(--transition), box-shadow var(--transition);
   animation: pulseDot 2s ease-in-out infinite;
 }
@@ -226,16 +199,18 @@ body {
 }
 
 /* ── Timer Ring ───────────────────── */
+/* Phase B — the SVG ring is superseded by the flip clock + thin linear
+   progress bar. Hidden via CSS only: the markup and updateRing() code
+   stay intact (zero risk). */
 .timer-ring-container {
   position: relative;
-  width: 260px;
-  height: 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 .timer-ring {
-  width: 100%;
-  height: 100%;
-  transform: rotate(-90deg);
+  display: none;
 }
 
 .ring-bg {
@@ -256,24 +231,31 @@ body {
 }
 
 .timer-display {
-  position: absolute;
-  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 4px;
+  gap: 16px;
 }
 
+/* Phase B — the flip clock renders the digits now; this span is kept
+   (visually hidden) exactly as before because it backs
+   window.__focusguardTimer.getDisplay() and the timer strip. */
 .timer-digits {
-  font-family: 'Orbitron', monospace;
-  font-size: 56px;
-  font-weight: 700;
-  letter-spacing: 3px;
-  color: var(--text-primary);
-  text-shadow: 0 0 30px var(--phase-glow);
-  transition: text-shadow 1.5s ease;
-  font-variant-numeric: tabular-nums;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* On the blocked page the full-size variant is a touch larger than the
+   flip-clock default; the popup can scale it down via --flip-size. */
+.timer-display .flip-clock {
+  --flip-size: 76px;
 }
 
 .timer-phase-label {
@@ -283,6 +265,26 @@ body {
   text-transform: uppercase;
   color: var(--phase-color);
   transition: color var(--transition);
+}
+
+/* ── Linear phase progress (replaces the SVG ring) ────── */
+.phase-progress {
+  width: min(320px, 78vw);
+  height: 2px;
+  margin-top: 4px;
+  border-radius: 1px;
+  background: var(--hairline);
+  overflow: hidden;
+}
+
+.phase-progress-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--phase-color);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 0.5s linear, background var(--transition);
 }
 
 /* ── Session Progress ─────────────── */
@@ -316,7 +318,7 @@ body {
 .dot.active {
   background: var(--phase-color);
   border-color: var(--phase-color);
-  box-shadow: 0 0 10px var(--phase-glow);
+  box-shadow: 0 0 6px var(--phase-glow);
   transition: background var(--transition), border-color var(--transition), box-shadow var(--transition);
 }
 
@@ -350,17 +352,13 @@ body {
   border-radius: 50%;
   background: var(--phase-color);
   color: var(--bg-dark);
-  box-shadow:
-    0 4px 20px var(--phase-glow),
-    0 0 60px var(--phase-glow);
+  box-shadow: 0 2px 14px var(--phase-glow);
   transition: all var(--transition), background 1.5s ease;
 }
 
 .btn-start:hover {
   transform: scale(1.08);
-  box-shadow:
-    0 6px 30px var(--phase-glow),
-    0 0 80px var(--phase-glow);
+  box-shadow: 0 4px 20px var(--phase-glow);
 }
 
 .btn-start:active {
@@ -377,9 +375,7 @@ body {
   height: 50px;
   border-radius: 50%;
   background: var(--bg-card);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--hairline);
   color: var(--text-secondary);
 }
 
@@ -432,18 +428,23 @@ body.phase-long-break {
   animation: pulseRing 0.6s ease 3;
 }
 
+/* ── Focus Visibility ─────────────── */
+/* Keyboard focus only (:focus-visible) — mouse clicks on the round
+   controls must not leave a ring. 2px outline, 2px offset, shared
+   token, same as popup.css and blocked-chat.css. */
+.btn-control:focus-visible {
+  outline: 2px solid var(--focus-color);
+  outline-offset: 2px;
+}
+
 /* ── Responsive ───────────────────── */
 @media (max-height: 600px) {
   .main-container {
     gap: 16px;
     padding: 20px;
   }
-  .timer-ring-container {
-    width: 200px;
-    height: 200px;
-  }
-  .timer-digits {
-    font-size: 42px;
+  .timer-display .flip-clock {
+    --flip-size: 56px;
   }
 }
 
