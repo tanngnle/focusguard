@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FocusGuard</title>
   <link rel="stylesheet" href="../fonts/fonts.css">
+  <link rel="stylesheet" href="../shared/theme.css">
+  <link rel="stylesheet" href="../lib/flip-clock.css">
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
@@ -24,6 +26,19 @@
         <span class="toggle-slider"></span>
       </label>
     </header>
+
+    <!-- Tab bar — Blocklist / Timer -->
+    <nav class="tab-bar" role="tablist" aria-label="FocusGuard sections">
+      <button type="button" role="tab" id="tab-btn-sites" class="tab-btn" aria-selected="true" aria-controls="tab-panel-sites">
+        Blocklist
+      </button>
+      <button type="button" role="tab" id="tab-btn-timer" class="tab-btn" aria-selected="false" aria-controls="tab-panel-timer" tabindex="-1">
+        Timer
+      </button>
+    </nav>
+
+    <!-- Blocklist tab panel -->
+    <div role="tabpanel" id="tab-panel-sites" aria-labelledby="tab-btn-sites">
 
     <!-- Add Website Section -->
     <section class="add-site-section">
@@ -60,7 +75,50 @@
           <span>Add a website above to start focusing</span>
         </div>
       </div>
+      <!-- Onboarding hint (E18): separate sibling of #empty-state so the
+           empty-state assertions stay untouched. Static — explains the
+           strip default and how the Pomodoro redirect is reached. -->
+      <p class="mode-hint" id="mode-hint">
+        Sites start in <strong>Strip</strong> mode (elements removed in-page).
+        Switch a site to <strong>Block</strong> mode to get the full-screen
+        Pomodoro redirect.
+      </p>
     </section>
+
+    </div>
+
+    <!-- Timer tab panel -->
+    <div role="tabpanel" id="tab-panel-timer" aria-labelledby="tab-btn-timer" hidden>
+
+      <!-- Compact timer readout -->
+      <div class="timer-readout">
+        <div class="popup-flip-clock-wrap">
+          <div id="popup-flip-clock" aria-hidden="true"></div>
+        </div>
+        <span class="popup-timer-digits" id="popup-timer-digits">25:00</span>
+        <div class="popup-phase-row">
+          <span class="popup-phase-label" id="popup-phase-label" aria-live="polite">WORK</span>
+          <span class="popup-session-label" id="popup-session-label">Session 1 of 4</span>
+        </div>
+        <div class="popup-session-dots" id="popup-session-dots" aria-hidden="true"></div>
+      </div>
+
+      <!-- Timer controls -->
+      <div class="timer-controls">
+        <button type="button" class="timer-btn timer-btn-primary" id="timer-start-btn">Start</button>
+        <button type="button" class="timer-btn" id="timer-pause-btn">Pause</button>
+        <button type="button" class="timer-btn" id="timer-skip-btn">Skip</button>
+        <button type="button" class="timer-btn" id="timer-reset-btn">Reset</button>
+      </div>
+
+      <button type="button" class="open-full-timer" id="open-full-timer-btn">
+        Open full-screen timer
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+          <polyline points="15 3 21 3 21 9"></polyline>
+          <line x1="10" y1="14" x2="21" y2="3"></line>
+        </svg>
+      </button>
 
     <!-- Pomodoro Settings -->
     <section class="settings-section">
@@ -114,9 +172,11 @@
       </div>
     </section>
 
+    </div>
+
     <!-- Footer -->
     <footer class="popup-footer">
-      <span>FocusGuard v1.0</span>
+      <span>FocusGuard v1.1.0</span>
     </footer>
   </div>
 

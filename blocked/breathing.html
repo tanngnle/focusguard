@@ -5,7 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FocusGuard — Breathe</title>
   <link rel="stylesheet" href="../fonts/fonts.css">
+  <link rel="stylesheet" href="../shared/theme.css">
   <style>
+    /* Page-local layout only — every color comes from shared/theme.css
+       (loaded above). Accent: the long-break violet, the single hue
+       for this calm-down interstitial. */
     * {
       margin: 0;
       padding: 0;
@@ -13,9 +17,9 @@
     }
 
     body {
-      font-family: 'Inter', system-ui, sans-serif;
-      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-      color: #e4e4e7;
+      font-family: var(--font-body);
+      background: var(--bg-dark);
+      color: var(--text-primary);
       min-height: 100vh;
       display: flex;
       align-items: center;
@@ -41,18 +45,18 @@
     }
 
     h1 {
-      font-family: 'Orbitron', monospace;
+      font-family: var(--font-display);
       font-size: 1.5rem;
       margin-bottom: 1rem;
-      color: #a78bfa;
+      color: var(--long-break-color);
     }
 
     .breathing-circle {
       width: 200px;
       height: 200px;
       border-radius: 50%;
-      background: radial-gradient(circle, rgba(167, 139, 250, 0.3) 0%, rgba(167, 139, 250, 0.1) 70%);
-      border: 3px solid #a78bfa;
+      background: var(--long-break-glow);
+      border: 1px solid var(--long-break-color);
       margin: 2rem auto;
       display: flex;
       align-items: center;
@@ -67,14 +71,14 @@
 
     .breathing-text {
       font-size: 1.2rem;
-      color: #e4e4e7;
+      color: var(--text-primary);
       font-weight: 500;
     }
 
     .timer-display {
-      font-family: 'Orbitron', monospace;
+      font-family: var(--font-display);
       font-size: 3rem;
-      color: #a78bfa;
+      color: var(--long-break-color);
       margin: 1rem 0;
     }
 
@@ -85,33 +89,33 @@
     .intention-prompt label {
       display: block;
       margin-bottom: 0.5rem;
-      color: #a1a1aa;
+      color: var(--text-secondary);
       font-size: 0.9rem;
     }
 
     .intention-input {
       width: 100%;
       padding: 0.75rem;
-      border: 2px solid #3f3f46;
-      border-radius: 0.5rem;
-      background: #27272a;
-      color: #e4e4e7;
+      border: 1px solid var(--hairline);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      color: var(--text-primary);
       font-size: 1rem;
       font-family: inherit;
     }
 
     .intention-input:focus {
       outline: none;
-      border-color: #a78bfa;
+      border-color: var(--long-break-color);
     }
 
     .continue-btn {
       margin-top: 2rem;
       padding: 1rem 2rem;
-      background: #a78bfa;
-      color: #1a1a2e;
+      background: var(--long-break-color);
+      color: var(--bg-dark);
       border: none;
-      border-radius: 0.5rem;
+      border-radius: var(--radius-sm);
       font-size: 1rem;
       font-weight: 600;
       cursor: pointer;
@@ -126,18 +130,18 @@
     }
 
     .continue-btn.active:hover {
-      background: #c4b5fd;
+      filter: brightness(1.12);
       transform: translateY(-2px);
     }
 
     .blocked-domain {
       margin-top: 1rem;
       font-size: 0.85rem;
-      color: #71717a;
+      color: var(--text-muted);
     }
 
     .blocked-domain strong {
-      color: #a78bfa;
+      color: var(--long-break-color);
     }
   </style>
 </head>

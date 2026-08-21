@@ -45,11 +45,42 @@ let messageCount = 0;
 let fallbackIndex = 0;
 
 // ── DOM References ──────────────────────────────────────
+const chatOverlay = document.getElementById("chat-overlay");
+const chatLauncher = document.getElementById("chat-launcher");
 const chatMessages = document.getElementById("chat-messages");
 const chatInput = document.getElementById("chat-input");
 const chatSendBtn = document.getElementById("chat-send-btn");
 const pandaMood = document.getElementById("panda-mood");
 const timerStrip = document.getElementById("timer-strip");
+
+// Overlay open/close — the overlay is hidden by default (CSS) so the
+// Pomodoro controls stay reachable. The launcher opens it; the timer
+// strip closes it. No state is persisted — the chat session survives
+// closing, only the overlay visibility changes.
+function openOverlay() {
+  if (!chatOverlay) return;
+  chatOverlay.classList.add("open");
+  if (chatInput) chatInput.focus();
+}
+
+function closeOverlay() {
+  if (!chatOverlay) return;
+  chatOverlay.classList.remove("open");
+}
+
+if (chatLauncher) chatLauncher.addEventListener("click", openOverlay);
+if (timerStrip) timerStrip.addEventListener("click", closeOverlay);
+
+// Escape closes the overlay while it's open (from any focus point inside
+// it — the chat input, send button, or message log). Closed state is a
+// no-op so blocked.js's Space shortcut keeps its own keydown path clear.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (chatOverlay && chatOverlay.classList.contains("open")) {
+    closeOverlay();
+    if (chatLauncher) chatLauncher.focus();
+  }
+});
 
 // ── Init ────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", async () => {

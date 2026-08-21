@@ -1,0 +1,149 @@
+/* ═══════════════════════════════════════════════════════
+   FocusGuard — Flip Clock Styles
+   Classic split-flap readout, minimalist execution: flat
+   dark cards, one hairline hinge, thin borders — no gloss,
+   no gradients. Animates transform/opacity ONLY, fixed-size
+   digit cells (zero reflow), self-hosted Orbitron.
+   Size scales off --flip-size so the popup can render a
+   compact variant later; accent hue comes from --phase-color
+   so body.phase-* theming keeps working.
+   ═══════════════════════════════════════════════════════ */
+
+.flip-clock {
+  /* Card height — the single knob for every derived size. */
+  --flip-size: 72px;
+  /* One half of a flip; keep in sync with FLIP_MS in flip-clock.js. */
+  --flip-ms: 300ms;
+  /* Surfaces come from the shared theme (fallbacks keep this sheet
+     usable standalone). */
+  --flip-card-bg: var(--surface, #12121a);
+  --flip-card-bg-top: var(--surface, #171721);
+  --flip-card-bg-bottom: var(--surface, #101018);
+  --flip-border: var(--hairline, rgba(255, 255, 255, 0.08));
+  --flip-accent: var(--phase-color, #2ed573);
+  --flip-digit-color: var(--text-primary, #e8e8f0);
+
+  display: flex;
+  align-items: center;
+  gap: calc(var(--flip-size) * 0.09);
+  font-family: 'Orbitron', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Digit card (fixed size — nothing reflows) ─────────── */
+.flip-digit {
+  position: relative;
+  width: calc(var(--flip-size) * 0.68);
+  height: var(--flip-size);
+  border: 1px solid var(--flip-border);
+  border-radius: calc(var(--flip-size) * 0.09);
+  background: var(--flip-card-bg);
+  perspective: calc(var(--flip-size) * 5);
+}
+
+/* Hairline hinge accent in the phase color — the only ornament. */
+.flip-digit::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: var(--flip-accent);
+  opacity: 0.28;
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* ── Card halves ───────────────────────────────────────── */
+.flip-half {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 50%;
+  overflow: hidden;
+}
+
+.flip-top {
+  top: 0;
+  background: var(--flip-card-bg-top);
+  border-radius: calc(var(--flip-size) * 0.09) calc(var(--flip-size) * 0.09) 0 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.55);
+}
+
+.flip-bottom {
+  bottom: 0;
+  background: var(--flip-card-bg-bottom);
+  border-radius: 0 0 calc(var(--flip-size) * 0.09) calc(var(--flip-size) * 0.09);
+}
+
+/* The glyph inside a half is a FULL-height digit; each half clips its
+   share. Top halves anchor it at the top edge, bottom halves pull it up
+   by half the card — static positioning only, no animated layout. */
+.flip-glyph {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: var(--flip-size);
+  line-height: var(--flip-size);
+  text-align: center;
+  font-size: calc(var(--flip-size) * 0.56);
+  font-weight: 700;
+  color: var(--flip-digit-color);
+}
+
+.flip-top .flip-glyph,
+.flip-leaf-top .flip-glyph {
+  top: 0;
+}
+
+.flip-bottom .flip-glyph,
+.flip-leaf-bottom .flip-glyph {
+  top: calc(var(--flip-size) * -0.5);
+}
+
+/* ── Flip leaves (transient, CSS-animated) ─────────────── */
+.flip-leaf {
+  z-index: 2;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.flip-leaf-top {
+  top: 0;
+  transform-origin: center bottom;
+  animation: flip-leaf-top var(--flip-ms) ease-in forwards;
+}
+
+.flip-leaf-bottom {
+  bottom: 0;
+  transform-origin: center top;
+  animation: flip-leaf-bottom var(--flip-ms) ease-out var(--flip-ms) forwards;
+}
+
+@keyframes flip-leaf-top {
+  from { transform: rotateX(0deg); }
+  to   { transform: rotateX(-90deg); }
+}
+
+@keyframes flip-leaf-bottom {
+  from { transform: rotateX(90deg); }
+  to   { transform: rotateX(0deg); }
+}
+
+/* ── Colon separator ───────────────────────────────────── */
+.flip-colon {
+  font-size: calc(var(--flip-size) * 0.44);
+  font-weight: 700;
+  line-height: var(--flip-size);
+  color: var(--flip-accent);
+  transform: translateY(calc(var(--flip-size) * -0.03));
+}
+
+/* ── Reduced motion: instant text swap, no animation ───── */
+@media (prefers-reduced-motion: reduce) {
+  .flip-leaf {
+    animation: none;
+    display: none;
+  }
+}

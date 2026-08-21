@@ -1,29 +1,30 @@
 /* ═══════════════════════════════════════════════════════
    FocusGuard — Popup Styles
-   Dark-themed, Unhook-inspired toggle UI
+   Shares the minimalist palette from shared/theme.css
+   (loaded first). This :root only bridges legacy component
+   names onto the shared tokens — no divergent hues.
    ═══════════════════════════════════════════════════════ */
 
 :root {
-  --bg-primary: #0d0d1a;
-  --bg-secondary: #141428;
-  --bg-card: #1a1a35;
-  --bg-card-hover: #22224a;
-  --bg-input: #12122a;
-  --text-primary: #e8e8f0;
-  --text-secondary: #8888aa;
-  --text-muted: #555570;
-  --accent: #6c5ce7;
-  --accent-light: #a29bfe;
-  --accent-glow: rgba(108, 92, 231, 0.3);
+  /* Surfaces — one neutral elevated surface, flat */
+  --bg-primary: var(--bg-dark);
+  --bg-secondary: var(--surface);
+  --bg-card: var(--surface);
+  --bg-card-hover: var(--surface-hover);
+  --bg-input: var(--bg-dark);
+
+  /* Accent — the work-phase green is the popup's single hue;
+     --danger stays a semantic error color, not an accent. */
+  --accent: var(--work-color);
+  --accent-light: #6fe3a3;
+  --accent-glow: var(--work-glow);
   --danger: #ff6b6b;
   --danger-hover: #ff4757;
-  --success: #2ed573;
-  --border: rgba(255, 255, 255, 0.06);
-  --border-accent: rgba(108, 92, 231, 0.3);
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  --success: var(--work-color);
+
+  /* Borders */
+  --border: var(--hairline);
+  --border-accent: var(--work-glow);
 }
 
 * {
@@ -33,12 +34,19 @@
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: var(--font-body);
   background: var(--bg-primary);
   color: var(--text-primary);
   width: 360px;
+  max-width: 100%;
   min-height: 200px;
   overflow-x: hidden;
+}
+
+/* The `hidden` attribute drives tab-panel visibility — make sure no
+   author rule can accidentally resurrect a hidden panel. */
+[hidden] {
+  display: none !important;
 }
 
 /* ── Scrollbar ────────────────────── */
@@ -69,7 +77,7 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 16px 18px;
-  background: linear-gradient(135deg, var(--bg-secondary), var(--bg-primary));
+  background: var(--bg-primary);
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
@@ -86,17 +94,13 @@ body {
   width: 32px;
   height: 32px;
   border-radius: var(--radius-sm);
-  filter: drop-shadow(0 0 8px var(--accent-glow));
 }
 
 .header-text h1 {
   font-size: 16px;
   font-weight: 700;
   letter-spacing: -0.3px;
-  background: linear-gradient(135deg, var(--text-primary), var(--accent-light));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: var(--text-primary);
 }
 
 .header-subtitle {
@@ -182,8 +186,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   background: var(--accent);
   border: none;
   border-radius: var(--radius-md);
@@ -249,8 +253,9 @@ body {
 .sites-list {
   max-height: 200px;
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
+  align-items: start;
   gap: 6px;
 }
 
@@ -272,6 +277,25 @@ body {
 
 .empty-state span {
   font-size: 11px;
+}
+
+/* ── Onboarding hint (Strip vs Block) ─ */
+/* Static note under the sites list. Styled purely from shared tokens;
+   the phase green left edge is the only accent. */
+.mode-hint {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--accent);
+  background: var(--bg-card);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.mode-hint strong {
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 /* ── Site Card ────────────────────── */
@@ -463,10 +487,10 @@ body {
   flex-shrink: 0;
 }
 
-.setting-dot.work { background: #2ed573; }
-.setting-dot.short-break { background: #3498ff; }
-.setting-dot.long-break { background: #a29bfe; }
-.setting-dot.rounds { background: #ffa502; }
+.setting-dot.work { background: var(--work-color); }
+.setting-dot.short-break { background: var(--short-break-color); }
+.setting-dot.long-break { background: var(--long-break-color); }
+.setting-dot.rounds { background: var(--text-secondary); }
 
 .setting-value {
   margin-left: auto;
@@ -505,12 +529,188 @@ body {
   box-shadow: 0 0 14px var(--accent-glow);
 }
 
-.work-slider::-webkit-slider-thumb { background: #2ed573; box-shadow: 0 0 8px rgba(46, 213, 115, 0.3); }
-.short-break-slider::-webkit-slider-thumb { background: #3498ff; box-shadow: 0 0 8px rgba(52, 152, 255, 0.3); }
-.long-break-slider::-webkit-slider-thumb { background: #a29bfe; box-shadow: 0 0 8px rgba(162, 155, 254, 0.3); }
-.rounds-slider::-webkit-slider-thumb { background: #ffa502; box-shadow: 0 0 8px rgba(255, 165, 2, 0.3); }
+.work-slider::-webkit-slider-thumb { background: var(--work-color); box-shadow: 0 0 8px var(--work-glow); }
+.short-break-slider::-webkit-slider-thumb { background: var(--short-break-color); box-shadow: 0 0 8px var(--short-break-glow); }
+.long-break-slider::-webkit-slider-thumb { background: var(--long-break-color); box-shadow: 0 0 8px var(--long-break-glow); }
+.rounds-slider::-webkit-slider-thumb { background: var(--text-secondary); box-shadow: none; }
 
 /* ── Footer ───────────────────────── */
+/* ── Tab Bar (Blocklist / Timer) ───── */
+.tab-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 6px 18px 0;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border);
+}
+
+.tab-btn {
+  min-height: 44px;
+  padding: 0 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  color: var(--text-secondary);
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: color var(--transition), background var(--transition), border-color var(--transition);
+}
+
+.tab-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.tab-btn[aria-selected="true"] {
+  color: var(--accent-light);
+  border-bottom-color: var(--accent);
+}
+
+/* ── Timer Tab ──────────────────── */
+.timer-readout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 18px 6px;
+}
+
+.popup-flip-clock-wrap {
+  display: flex;
+  justify-content: center;
+}
+
+/* Compact variant of the shared flip clock — `--flip-size` is the
+   single sizing knob (see lib/flip-clock.css); the ID selector wins
+   over the component's own declaration. */
+#popup-flip-clock.flip-clock {
+  --flip-size: 34px;
+}
+
+/* Hidden mirror of the flip readout — source of truth for tests and
+   future accessible channels; the flip cards own the visual display. */
+.popup-timer-digits {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.popup-phase-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.popup-phase-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  color: var(--accent-light);
+}
+
+.popup-session-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.popup-session-dots {
+  display: flex;
+  gap: 6px;
+  min-height: 8px;
+}
+
+.popup-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  opacity: 0.5;
+}
+
+.popup-dot.completed {
+  background: var(--success);
+  opacity: 1;
+}
+
+.popup-dot.active {
+  background: var(--accent);
+  opacity: 1;
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+
+.timer-controls {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 18px;
+}
+
+.timer-btn {
+  min-height: 44px;
+  padding: 0 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), transform var(--transition);
+}
+
+.timer-btn:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--border-accent);
+}
+
+.timer-btn:active {
+  transform: scale(0.96);
+}
+
+.timer-btn-primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: white;
+}
+
+.timer-btn-primary:hover {
+  background: var(--accent-light);
+}
+
+.open-full-timer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: calc(100% - 36px);
+  min-height: 44px;
+  margin: 0 18px 6px;
+  background: transparent;
+  border: 1px dashed var(--border-accent);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--transition), border-color var(--transition), background var(--transition);
+}
+
+.open-full-timer:hover {
+  color: var(--accent-light);
+  border-color: var(--accent);
+  background: rgba(46, 213, 115, 0.06);
+}
+
 .popup-footer {
   padding: 10px 18px;
   border-top: 1px solid var(--border);
@@ -520,14 +720,23 @@ body {
 }
 
 /* ── Focus Visibility ─────────────── */
+/* Every interactive element: 2px outline, 2px offset, shared token
+   (--focus-color, see shared/theme.css). Consistent with blocked.css
+   and blocked-chat.css. */
 .btn-add:focus-visible,
 .btn-delete:focus-visible,
 .settings-toggle:focus-visible,
+.tab-btn:focus-visible,
+.timer-btn:focus-visible,
+.open-full-timer:focus-visible,
 #site-input:focus-visible,
 .slider:focus-visible,
+.mode-button:focus-visible,
+.friction-level-select:focus-visible,
+.element-toggle input:focus-visible,
 .master-toggle input:focus-visible + .toggle-slider,
 .site-toggle input:focus-visible + .toggle-slider {
-  outline: 2px solid var(--accent-light);
+  outline: 2px solid var(--focus-color);
   outline-offset: 2px;
 }
 
@@ -548,6 +757,9 @@ body {
   .settings-panel,
   .settings-toggle .chevron,
   .btn-add,
+  .tab-btn,
+  .timer-btn,
+  .open-full-timer,
   .slider::-webkit-slider-thumb {
     transition: none !important;
   }

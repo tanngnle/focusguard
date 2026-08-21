@@ -1,10 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { resetChromeMock } from "../helpers/chrome-mock.js";
-import { mountPopupDom, fireDomContentLoaded, flushMicrotasks } from "../helpers/dom-fixture.js";
+import { mountPopupDom, fireDomContentLoaded, flushMicrotasks, ensureLocalStorage } from "../helpers/dom-fixture.js";
 
-async function mountPopup(initialStorage = {}) {
+async function mountPopup(initialStorage = {}, initialLocalStorage = {}) {
   resetChromeMock();
   await chrome.storage.sync.set(initialStorage);
+  // Seeded BEFORE the module imports, so no listener exists yet — the
+  // writes land silently and initTimerTab's restore path observes them.
+  if (Object.keys(initialLocalStorage).length > 0) {
+    await chrome.storage.local.set(initialLocalStorage);
+  }
   mountPopupDom();
   vi.resetModules();
   await import("../../popup/popup.js");
@@ -221,8 +226,6 @@ describe("popup.js — C3: rapid-succession delete keyed by domain", () => {
 
     await flushMicrotasks();
 
-    console.log("DEBUG all set calls:", JSON.stringify(chrome.storage.sync.set.mock.calls, null, 2));
-
     const data = await chrome.storage.sync.get(["sites"]);
     const byDomain = Object.fromEntries(data.sites.map((s) => [s.domain, s.active]));
     expect(byDomain).toEqual({
@@ -326,5 +329,318 @@ describe("popup.js — intervention mode", () => {
 
     // Twitter doesn't have a stripping template yet, so no element toggles
     expect(elementToggles).toBeNull();
+  });
+});
+
+/** Reads the popup flip clock's visible readout as "MM:SS" (top halves). */
+function readPopupFlipDigits() {
+  const mount = document.getElementById("popup-flip-clock");
+  const digits = [...mount.querySelectorAll(".flip-digit")].map(
+    (card) => card.querySelector(".flip-top .flip-glyph").textContent
+  );
+  return `${digits[0]}${digits[1]}:${digits[2]}${digits[3]}`;
+}
+
+describe("popup.js — tabs", () => {
+  beforeEach(() => {
+    ensureLocalStorage();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    window.localStorage.clear();
+  });
+
+  it("defaults to the Blocklist tab: sites panel visible, timer panel hidden", async () => {
+    await mountPopup({ enabled: true, sites: [] });
+
+    expect(document.getElementById("tab-btn-sites").getAttribute("aria-selected")).toBe("true");
+    expect(document.getElementById("tab-btn-timer").getAttribute("aria-selected")).toBe("false");
+    expect(document.getElementById("tab-panel-sites").hidden).toBe(false);
+    expect(document.getElementById("tab-panel-timer").hidden).toBe(true);
+  });
+
+  it("clicking the Timer tab shows the timer panel, hides the sites panel, and updates aria-selected", async () => {
+    await mountPopup({ enabled: true, sites: [] });
+
+    document.getElementById("tab-btn-timer").click();
+
+    expect(document.getElementById("tab-btn-timer").getAttribute("aria-selected")).toBe("true");
+    expect(document.getElementById("tab-btn-sites").getAttribute("aria-selected")).toBe("false");
+    expect(document.getElementById("tab-panel-timer").hidden).toBe(false);
+    expect(document.getElementById("tab-panel-sites").hidden).toBe(true);
+
+    // Switching back restores the original state.
+    document.getElementById("tab-btn-sites").click();
+    expect(document.getElementById("tab-btn-sites").getAttribute("aria-selected")).toBe("true");
+    expect(document.getElementById("tab-panel-sites").hidden).toBe(false);
+    expect(document.getElementById("tab-panel-timer").hidden).toBe(true);
+  });
+
+  it("ArrowRight/ArrowLeft move between tabs and activate them", async () => {
+    await mountPopup({ enabled: true, sites: [] });
+
+    const sitesTab = document.getElementById("tab-btn-sites");
+    const timerTab = document.getElementById("tab-btn-timer");
+
+    sitesTab.focus();
+    sitesTab.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    expect(timerTab.getAttribute("aria-selected")).toBe("true");
+    expect(document.getElementById("tab-panel-timer").hidden).toBe(false);
+    expect(document.activeElement).toBe(timerTab);
+
+    timerTab.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+    expect(sitesTab.getAttribute("aria-selected")).toBe("true");
+    expect(document.getElementById("tab-panel-sites").hidden).toBe(false);
+    expect(document.activeElement).toBe(sitesTab);
+  });
+
+  it("persists the last active tab in localStorage and restores it on next open", async () => {
+    await mountPopup({ enabled: true, sites: [] });
+    document.getElementById("tab-btn-timer").click();
+    expect(window.localStorage.getItem("focusguard_active_tab")).toBe("tab-btn-timer");
+
+    // Re-open the popup (fresh module instance, same localStorage).
+    await mountPopup({ enabled: true, sites: [] });
+    expect(document.getElementById("tab-btn-timer").getAttribute("aria-selected")).toBe("true");
+    expect(document.getElementById("tab-panel-timer").hidden).toBe(false);
+    expect(document.getElementById("tab-panel-sites").hidden).toBe(true);
+  });
+});
+
+describe("popup.js — Timer tab", () => {
+  beforeEach(() => {
+    ensureLocalStorage();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    window.localStorage.clear();
+  });
+
+  it("renders idle defaults from the settings sliders when no timer state is stored", async () => {
+    await mountPopup({
+      enabled: true,
+      sites: [],
+      pomodoroSettings: { workDuration: 30, shortBreak: 10, longBreak: 20, roundsBeforeLong: 3 },
+    });
+
+    expect(document.getElementById("popup-timer-digits").textContent).toBe("30:00");
+    expect(readPopupFlipDigits()).toBe("30:00");
+    expect(document.getElementById("popup-phase-label").textContent).toBe("WORK");
+    expect(document.getElementById("popup-session-label").textContent).toBe("Session 1 of 3");
+    expect(document.querySelectorAll("#popup-session-dots .popup-dot")).toHaveLength(3);
+  });
+
+  it("Start writes focusguard_timer_state to storage.local with isRunning true", async () => {
+    await mountPopup({
+      enabled: true,
+      sites: [],
+      pomodoroSettings: { workDuration: 25, shortBreak: 5, longBreak: 15, roundsBeforeLong: 4 },
+    });
+
+    document.getElementById("timer-start-btn").click();
+    await flushMicrotasks();
+
+    const data = await chrome.storage.local.get(["focusguard_timer_state"]);
+    const state = data.focusguard_timer_state;
+    expect(state).toBeTruthy();
+    expect(state.isRunning).toBe(true);
+    expect(state.phase).toBe("work");
+    expect(state.totalTime).toBe(25 * 60);
+    expect(state.totalRounds).toBe(4);
+    expect(typeof state.endsAt).toBe("number");
+    expect(state.remaining).toBeNull();
+    expect(typeof state.savedAt).toBe("number");
+
+    // The popup readout reflects the running state immediately.
+    expect(document.getElementById("popup-timer-digits").textContent).toBe("25:00");
+  });
+
+  it("Pause/Skip/Reset write the corresponding transitions to the same storage key", async () => {
+    await mountPopup({ enabled: true, sites: [] });
+
+    // Start, then pause ~2s into the phase.
+    vi.useFakeTimers();
+    document.getElementById("timer-start-btn").click();
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(2000);
+    document.getElementById("timer-pause-btn").click();
+    await flushMicrotasks();
+
+    let data = await chrome.storage.local.get(["focusguard_timer_state"]);
+    expect(data.focusguard_timer_state.isRunning).toBe(false);
+    expect(data.focusguard_timer_state.endsAt).toBeNull();
+    expect(data.focusguard_timer_state.remaining).toBe(25 * 60 - 2);
+    vi.useRealTimers();
+
+    // Skip moves to the short break, paused, full duration.
+    document.getElementById("timer-skip-btn").click();
+    await flushMicrotasks();
+    data = await chrome.storage.local.get(["focusguard_timer_state"]);
+    expect(data.focusguard_timer_state.phase).toBe("shortBreak");
+    expect(data.focusguard_timer_state.isRunning).toBe(false);
+    expect(data.focusguard_timer_state.remaining).toBe(5 * 60);
+
+    // Reset returns to round 1 work at the slider duration.
+    document.getElementById("timer-reset-btn").click();
+    await flushMicrotasks();
+    data = await chrome.storage.local.get(["focusguard_timer_state"]);
+    expect(data.focusguard_timer_state.phase).toBe("work");
+    expect(data.focusguard_timer_state.currentRound).toBe(1);
+    expect(data.focusguard_timer_state.totalTime).toBe(25 * 60);
+  });
+
+  it("a storage.onChanged write from the blocked-page side updates the popup readout live", async () => {
+    await mountPopup({ enabled: true, sites: [] });
+    expect(document.getElementById("popup-timer-digits").textContent).toBe("25:00");
+
+    // Simulate the blocked page persisting a paused short-break state.
+    await chrome.storage.local.set({
+      focusguard_timer_state: {
+        phase: "shortBreak",
+        currentRound: 2,
+        totalRounds: 4,
+        totalTime: 300,
+        isRunning: false,
+        endsAt: null,
+        remaining: 120,
+        savedAt: Date.now(),
+      },
+    });
+    await flushMicrotasks();
+
+    expect(document.getElementById("popup-timer-digits").textContent).toBe("02:00");
+    expect(readPopupFlipDigits()).toBe("02:00");
+    expect(document.getElementById("popup-phase-label").textContent).toBe("BREAK");
+    expect(document.getElementById("popup-session-label").textContent).toBe("Session 2 of 4");
+    const dots = document.querySelectorAll("#popup-session-dots .popup-dot");
+    expect(dots).toHaveLength(4);
+    expect(dots[0].classList.contains("completed")).toBe(true);
+    expect(dots[1].classList.contains("active")).toBe(true);
+  });
+
+  it("while running, a 1s ticker repaints the readout from the endsAt deadline", async () => {
+    await mountPopup({ enabled: true, sites: [] });
+
+    vi.useFakeTimers();
+    const now = Date.now();
+    await chrome.storage.local.set({
+      focusguard_timer_state: {
+        phase: "work",
+        currentRound: 1,
+        totalRounds: 4,
+        totalTime: 1500,
+        isRunning: true,
+        endsAt: now + 65_000,
+        remaining: null,
+        savedAt: now,
+      },
+    });
+    await flushMicrotasks();
+    expect(document.getElementById("popup-timer-digits").textContent).toBe("01:05");
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(document.getElementById("popup-timer-digits").textContent).toBe("01:04");
+    expect(readPopupFlipDigits()).toBe("01:04");
+
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(document.getElementById("popup-timer-digits").textContent).toBe("01:02");
+  });
+
+  it("the 1s ticker advances the phase when the deadline passes while the popup is open", async () => {
+    await mountPopup({ enabled: true, sites: [] });
+
+    vi.useFakeTimers();
+    const now = Date.now();
+    await chrome.storage.local.set({
+      focusguard_timer_state: {
+        phase: "work",
+        currentRound: 1,
+        totalRounds: 4,
+        totalTime: 1500,
+        isRunning: true,
+        endsAt: now + 2000,
+        remaining: null,
+        savedAt: now,
+      },
+    });
+    await flushMicrotasks();
+    expect(document.getElementById("popup-timer-digits").textContent).toBe("00:02");
+
+    // Past the deadline the ticker must run the same completion
+    // transition the blocked page uses (skip → next phase, paused)
+    // instead of freezing at 00:00 "running" forever.
+    await vi.advanceTimersByTimeAsync(2100);
+    await flushMicrotasks();
+
+    expect(document.getElementById("popup-phase-label").textContent).toBe("BREAK");
+    expect(document.getElementById("popup-timer-digits").textContent).toBe("05:00");
+
+    const data = await chrome.storage.local.get(["focusguard_timer_state"]);
+    expect(data.focusguard_timer_state.phase).toBe("shortBreak");
+    expect(data.focusguard_timer_state.isRunning).toBe(false);
+  });
+
+  it("restore advances one phase when a fresh running state's deadline already passed", async () => {
+    const now = Date.now();
+    await mountPopup(
+      { enabled: true, sites: [] },
+      {
+        focusguard_timer_state: {
+          phase: "work",
+          currentRound: 1,
+          totalRounds: 4,
+          totalTime: 1500,
+          isRunning: true,
+          endsAt: now - 5000,
+          remaining: null,
+          savedAt: now,
+        },
+      }
+    );
+
+    // Mirrors blocked.js's reviveState(): exactly one phase advance, and
+    // since the session was running it keeps running into the new phase.
+    expect(document.getElementById("popup-phase-label").textContent).toBe("BREAK");
+    expect(document.getElementById("popup-timer-digits").textContent).toBe("05:00");
+  });
+
+  it("discards a stored state older than 2h to idle defaults and never re-persists it", async () => {
+    const staleSavedAt = Date.now() - (2 * 60 * 60 * 1000 + 60_000);
+    await mountPopup(
+      { enabled: true, sites: [] },
+      {
+        focusguard_timer_state: {
+          phase: "shortBreak",
+          currentRound: 2,
+          totalRounds: 4,
+          totalTime: 300,
+          isRunning: false,
+          endsAt: null,
+          remaining: 42,
+          savedAt: staleSavedAt,
+        },
+      }
+    );
+
+    // Stale session is not surfaced — idle defaults from the sliders.
+    expect(document.getElementById("popup-timer-digits").textContent).toBe("25:00");
+    expect(document.getElementById("popup-phase-label").textContent).toBe("WORK");
+    expect(document.getElementById("popup-session-label").textContent).toBe("Session 1 of 4");
+
+    // And not laundered back into storage with a fresh savedAt.
+    const data = await chrome.storage.local.get(["focusguard_timer_state"]);
+    expect(data.focusguard_timer_state.savedAt).toBe(staleSavedAt);
+    expect(data.focusguard_timer_state.phase).toBe("shortBreak");
+  });
+
+  it("Open full-screen timer creates a tab at blocked/blocked.html", async () => {
+    await mountPopup({ enabled: true, sites: [] });
+
+    document.getElementById("open-full-timer-btn").click();
+    expect(chrome.tabs.create).toHaveBeenCalledWith(
+      expect.objectContaining({ url: expect.stringContaining("blocked/blocked.html") })
+    );
   });
 });
