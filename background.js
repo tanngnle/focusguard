@@ -5,7 +5,6 @@
     ═══════════════════════════════════════════════════════ */
 
 import { matchSite } from "./lib/matcher.js";
-import { getFrictionConfig } from "./lib/friction-rules.js";
 import { BUILTIN_SITES } from "./lib/domain.js";
 import { migrateStorage, CURRENT_SCHEMA_VERSION } from "./lib/storage-migration.js";
 
@@ -37,20 +36,28 @@ const DEFAULTS = {
 // wakes up — rather than only in onInstalled/onStartup. `ready`
 // is awaited as a one-time fallback if a navigation arrives before
 // the initial read completes.
-let cache = { enabled: DEFAULTS.enabled, sites: DEFAULTS.sites };
+let cache = { enabled: DEFAULTS.enabled, sites: DEFAULTS.sites, focusSessionActive: false };
 let hydrated = false;
 
 const ready = (async () => {
-  const data = await chrome.storage.sync.get(["enabled", "sites"]);
-  if (data.enabled !== undefined) cache.enabled = data.enabled;
-  if (data.sites !== undefined) cache.sites = data.sites;
+  const syncData = await chrome.storage.sync.get(["enabled", "sites"]);
+  const localData = await chrome.storage.local.get(["focusSessionActive"]);
+  if (syncData.enabled !== undefined) cache.enabled = syncData.enabled;
+  if (syncData.sites !== undefined) cache.sites = syncData.sites;
+  if (localData.focusSessionActive !== undefined) {
+    cache.focusSessionActive = localData.focusSessionActive;
+  }
   hydrated = true;
 })();
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== "sync") return;
-  if (changes.enabled) cache.enabled = changes.enabled.newValue;
-  if (changes.sites) cache.sites = changes.sites.newValue;
+  if (areaName === "sync") {
+    if (changes.enabled) cache.enabled = changes.enabled.newValue;
+    if (changes.sites) cache.sites = changes.sites.newValue;
+  }
+  if (areaName === "local" && changes.focusSessionActive) {
+    cache.focusSessionActive = changes.focusSessionActive.newValue;
+  }
 });
 
 /**
@@ -119,28 +126,27 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     const matchedSite = matchSite(details.url, cache.sites);
     if (!matchedSite) return;
 
-    // Determine restriction level (strip vs friction vs block)
-    const restrictionLevel = matchedSite.restrictionLevel || matchedSite.interventionMode || "strip";
-
-    // If in strip mode, don't redirect — let content script handle it
-    if (restrictionLevel === "strip") {
-      return;
-    }
-
-    // Get friction config for friction mode
-    if (restrictionLevel === "friction") {
-      const delaySeconds = matchedSite.frictionDelay || 10;
-      const breathingPageUrl = chrome.runtime.getURL("blocked/breathing.html");
-      const redirectUrl = `${breathingPageUrl}?domain=${encodeURIComponent(matchedSite.domain)}&delay=${delaySeconds}`;
+    // Check Lock Down mode (force block all matched sites)
+    if (cache.focusSessionActive) {
+      const lockedDownUrl = chrome.runtime.getURL("blocked/blocked.html");
+      const lockdownRedirectUrl = `${lockedDownUrl}?domain=${encodeURIComponent(matchedSite.domain)}`;
       try {
-        await chrome.tabs.update(details.tabId, { url: redirectUrl });
+        await chrome.tabs.update(details.tabId, { url: lockdownRedirectUrl });
       } catch (err) {
         // Tab may have closed mid-navigation — nothing to redirect.
       }
       return;
     }
 
-    // Block mode: redirect to Pomodoro timer
+    // Read restriction level directly (strip/friction/block).
+    // Strip and friction are delivered by the content script overlay —
+    // background lets them fall through; only block redirects.
+    const restrictionLevel = matchedSite.restrictionLevel;
+    if (restrictionLevel === "strip" || restrictionLevel === "friction") {
+      return;
+    }
+
+    // Block mode: redirect to Pomodoro timer page
     const blockedPageUrl = chrome.runtime.getURL("blocked/blocked.html");
     const redirectUrl = `${blockedPageUrl}?domain=${encodeURIComponent(matchedSite.domain)}`;
 

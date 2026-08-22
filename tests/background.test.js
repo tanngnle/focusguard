@@ -183,6 +183,120 @@ describe("background.js — cache coherence via storage.onChanged", () => {
   });
 });
 
+describe("background.js — restrictionLevel routing (#24)", () => {
+  beforeEach(() => {
+    resetChromeMock();
+  });
+
+  it("strip level does NOT redirect — the content script overlay handles it", async () => {
+    await chrome.storage.sync.set({
+      enabled: true,
+      sites: [{ domain: "youtube.com", active: true, restrictionLevel: "strip" }],
+    });
+    await loadBackground();
+
+    await triggerNavigation({ url: "https://www.youtube.com/", tabId: 3 });
+
+    expect(chrome.tabs.update).not.toHaveBeenCalled();
+  });
+
+  it("friction level does NOT redirect — the content script overlay handles it (no breathing.html redirect)", async () => {
+    await chrome.storage.sync.set({
+      enabled: true,
+      sites: [{ domain: "youtube.com", active: true, restrictionLevel: "friction", frictionDelay: 20 }],
+    });
+    await loadBackground();
+
+    await triggerNavigation({ url: "https://www.youtube.com/watch?v=x", tabId: 3 });
+
+    expect(chrome.tabs.update).not.toHaveBeenCalled();
+  });
+
+  it("block level redirects to blocked.html with the matched domain", async () => {
+    await chrome.storage.sync.set({
+      enabled: true,
+      sites: [{ domain: "youtube.com", active: true, restrictionLevel: "block" }],
+    });
+    await loadBackground();
+
+    await triggerNavigation({ url: "https://www.youtube.com/", tabId: 5 });
+
+    expect(chrome.tabs.update).toHaveBeenCalledTimes(1);
+    const [tabId, updateProps] = chrome.tabs.update.mock.calls[0];
+    expect(tabId).toBe(5);
+    expect(updateProps.url).toContain(
+      `chrome-extension://${FAKE_EXTENSION_ID}/blocked/blocked.html`
+    );
+    expect(updateProps.url).toContain("domain=youtube.com");
+  });
+});
+
+describe("background.js — Lock Down override (#25 pre-wiring)", () => {
+  beforeEach(() => {
+    resetChromeMock();
+  });
+
+  it("focusSessionActive=true redirects a strip site to blocked.html", async () => {
+    await chrome.storage.sync.set({
+      enabled: true,
+      sites: [{ domain: "youtube.com", active: true, restrictionLevel: "strip" }],
+    });
+    await chrome.storage.local.set({ focusSessionActive: true });
+    await loadBackground();
+
+    await triggerNavigation({ url: "https://www.youtube.com/", tabId: 4 });
+
+    expect(chrome.tabs.update).toHaveBeenCalledTimes(1);
+    const [, updateProps] = chrome.tabs.update.mock.calls[0];
+    expect(updateProps.url).toContain(
+      `chrome-extension://${FAKE_EXTENSION_ID}/blocked/blocked.html`
+    );
+    expect(updateProps.url).toContain("domain=youtube.com");
+  });
+
+  it("focusSessionActive=true redirects a friction site to blocked.html", async () => {
+    await chrome.storage.sync.set({
+      enabled: true,
+      sites: [{ domain: "youtube.com", active: true, restrictionLevel: "friction", frictionDelay: 10 }],
+    });
+    await chrome.storage.local.set({ focusSessionActive: true });
+    await loadBackground();
+
+    await triggerNavigation({ url: "https://www.youtube.com/", tabId: 4 });
+
+    expect(chrome.tabs.update).toHaveBeenCalledTimes(1);
+    const [, updateProps] = chrome.tabs.update.mock.calls[0];
+    expect(updateProps.url).toContain("blocked/blocked.html");
+    expect(updateProps.url).toContain("domain=youtube.com");
+  });
+
+  it("picks up focusSessionActive flips in the local area via onChanged", async () => {
+    await chrome.storage.sync.set({
+      enabled: true,
+      sites: [{ domain: "youtube.com", active: true, restrictionLevel: "strip" }],
+    });
+    await loadBackground();
+
+    // Session not active yet: strip falls through, no redirect.
+    await triggerNavigation({ url: "https://www.youtube.com/", tabId: 4 });
+    expect(chrome.tabs.update).not.toHaveBeenCalled();
+
+    // Lock Down starts — written to chrome.storage.local.
+    await chrome.storage.local.set({ focusSessionActive: true });
+
+    await triggerNavigation({ url: "https://www.youtube.com/", tabId: 4 });
+    expect(chrome.tabs.update).toHaveBeenCalledTimes(1);
+    const [, updateProps] = chrome.tabs.update.mock.calls[0];
+    expect(updateProps.url).toContain("blocked/blocked.html");
+
+    // Session ends — strip sites fall through again.
+    await chrome.storage.local.set({ focusSessionActive: false });
+
+    await triggerNavigation({ url: "https://www.youtube.com/", tabId: 4 });
+    expect(chrome.tabs.update).toHaveBeenCalledTimes(1); // unchanged
+  });
+});
+
 describe("background.js — onInstalled seeding (A2 regression)", () => {
   beforeEach(() => {
     resetChromeMock();
