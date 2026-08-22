@@ -1,14 +1,14 @@
-# FocusGuard Domain Model
+﻿# MindfulBrowse Domain Model
 
 ## Glossary
 
-**FocusGuard** - A privacy-first focus tool that combines mindful delay with surgical DOM stripping to help users break impulsive browsing habits and separate productive utility from algorithmic distraction.
+**MindfulBrowse** - A privacy-first focus tool that combines mindful delay with surgical DOM stripping to help users break impulsive browsing habits and separate productive utility from algorithmic distraction.
 
 **Mindful delay** - A brief breathing exercise (default 10 seconds) that interrupts the impulse to visit a distracting site. Breaks the dopamine loop and gives users a moment to choose intentionally. Inspired by one sec app (peer-reviewed, 57% reduction in app opens).
 
 **Surgical stripping** - Selective removal of distracting UI elements (feeds, recommendations, Shorts, comments) from a platform while preserving productive functionality (search, video playback, messaging). Applied after the mindful delay if the user chooses to proceed.
 
-**Binary blocking** - The original FocusGuard behavior: when a user navigates to a blocked domain, the extension redirects the tab to a full-screen Pomodoro timer page. Available as an escalation option for users who want stricter control.
+**Binary blocking** - The original MindfulBrowse behavior: when a user navigates to a blocked domain, the extension redirects the tab to a full-screen Pomodoro timer page. Available as an escalation option for users who want stricter control.
 
 **Friction** - Progressive psychological interventions that delay or disrupt impulsive access to distracting sites. The core innovation: delay breaks the impulse, stripping reduces doomscrolling if they proceed.
 
@@ -16,7 +16,7 @@
 
 **Site** - A domain entry in the user's blocklist. Each site has a **restriction level**: `strip` (default, mindful delay + hide elements), `friction` (longer delay + confirmation), or `block` (hard redirect to timer). Users choose per site how strict they want to be.
 
-**Restriction level** - How FocusGuard responds when a user navigates to a monitored site:
+**Restriction level** - How MindfulBrowse responds when a user navigates to a monitored site:
 - `strip` = 10-second breathing prompt, then site loads with distracting elements hidden (default)
 - `friction` = longer delay (30-60s) + intention confirmation, then stripped
 - `block` = immediate redirect to Pomodoro timer page (strictest)

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * blocked.test.js — regression tests for the blocked (Pomodoro) page.
  *
  * Proves the timer controls work end to end against the real markup:
@@ -129,7 +129,7 @@ describe("blocked page — shared timer state: external writes (ADR-0002)", () =
     // The popup pauses the shared state; its pause() write lands in
     // chrome.storage.local while this page is open.
     await chrome.storage.local.set({
-      focusguard_timer_state: {
+      MindfulBrowse_timer_state: {
         phase: "work",
         currentRound: 1,
         totalRounds: 4,
@@ -153,9 +153,9 @@ describe("blocked page — shared timer state: external writes (ADR-0002)", () =
     // The 10s heartbeat is disarmed too — it must not re-persist a
     // running state over the popup's pause.
     await vi.advanceTimersByTimeAsync(11_000);
-    const data = await chrome.storage.local.get(["focusguard_timer_state"]);
-    expect(data.focusguard_timer_state.isRunning).toBe(false);
-    expect(data.focusguard_timer_state.remaining).toBe(1498);
+    const data = await chrome.storage.local.get(["MindfulBrowse_timer_state"]);
+    expect(data.MindfulBrowse_timer_state.isRunning).toBe(false);
+    expect(data.MindfulBrowse_timer_state.remaining).toBe(1498);
   });
 
   it("a start written from the popup renders the blocked page running and ticking", async () => {
@@ -165,7 +165,7 @@ describe("blocked page — shared timer state: external writes (ADR-0002)", () =
     vi.useFakeTimers();
     const now = Date.now();
     await chrome.storage.local.set({
-      focusguard_timer_state: {
+      MindfulBrowse_timer_state: {
         phase: "work",
         currentRound: 1,
         totalRounds: 4,

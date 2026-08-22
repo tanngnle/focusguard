@@ -1,6 +1,6 @@
-# FocusGuard
+﻿# MindfulBrowse
 
-FocusGuard is a Manifest V3 Chrome extension that blocks distracting websites. When you navigate to a domain you've added to your list, it intercepts the navigation and replaces the page with a full-screen Pomodoro timer instead of loading the site. It's built as plain JS/HTML/CSS with no build step and no external runtime dependencies.
+MindfulBrowse is a Manifest V3 Chrome extension that blocks distracting websites. When you navigate to a domain you've added to your list, it intercepts the navigation and replaces the page with a full-screen Pomodoro timer instead of loading the site. It's built as plain JS/HTML/CSS with no build step and no external runtime dependencies.
 
 ## Install from source
 
@@ -25,7 +25,7 @@ master toggle in the header applying to both.
 
 - A compact **flip-clock** readout of the current Pomodoro session with Start, Pause, Skip, and Reset controls, plus session dots and the phase label.
 - **Open full-screen timer** launches the same timer page the blocking redirect shows.
-- The popup and the blocked page control **one shared timer**: state lives in `chrome.storage.local["focusguard_timer_state"]`, so you can start a session from the popup and continue it on the full-screen page (or vice versa).
+- The popup and the blocked page control **one shared timer**: state lives in `chrome.storage.local["MindfulBrowse_timer_state"]`, so you can start a session from the popup and continue it on the full-screen page (or vice versa).
 
 ### The blocked / timer page
 
@@ -52,7 +52,7 @@ A background service worker (`background.js`) listens for `chrome.webNavigation.
 The extension's contexts — the background service worker, the popup, the blocked/timer page, and the stripping content scripts — communicate **only through `chrome.storage`**. There is no message passing between them.
 
 - Site list, master toggle, and Pomodoro settings live in `chrome.storage.sync`.
-- Running timer state (phase, round, time remaining) lives in `chrome.storage.local` under `focusguard_timer_state`, saved on every tick so it can resume after a reload. Both the popup's Timer tab and the blocked page read and write this single key, which is how the two surfaces stay in sync without message passing.
+- Running timer state (phase, round, time remaining) lives in `chrome.storage.local` under `MindfulBrowse_timer_state`, saved on every tick so it can resume after a reload. Both the popup's Timer tab and the blocked page read and write this single key, which is how the two surfaces stay in sync without message passing.
 
 ## Permissions and privacy
 

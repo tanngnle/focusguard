@@ -1,0 +1,3946 @@
+diff --git a/README.md b/README.md
+index 6c3292c..1a84c3a 100644
+--- a/README.md
++++ b/README.md
+@@ -12,25 +12,49 @@ There is nothing to compile — Chrome loads the JS/HTML/CSS files directly off
+ 
+ ## Usage
+ 
+-- **Add a site**: type a domain (e.g. `twitter.com`) into the popup's input field and click add, or press Enter. Domains are normalized (protocol, `www.`, path, and whitespace stripped) and validated before being saved.
++The popup is split into two tabs — **Blocklist** and **Timer** — with the
++master toggle in the header applying to both.
++
++### Blocklist tab
++
++- **Add a site**: type a domain (e.g. `twitter.com`) into the input field and click add, or press Enter. Domains are normalized (protocol, `www.`, path, and whitespace stripped) and validated before being saved.
+ - **Per-site toggle**: each entry in the blocked-sites list has its own on/off switch, so you can keep a site in your list without actively blocking it.
+-- **Master toggle**: the switch in the popup header turns blocking off entirely without clearing your site list.
+-- **Pomodoro settings**, adjustable via sliders in the popup:
++- **Strip vs Block mode**: every site card shows its intervention mode. New sites start in **Strip** mode, where a content script removes distracting page elements in place. Switch a site to **Block** mode to get the full-screen Pomodoro redirect instead (a hint in the tab explains this).
++
++### Timer tab
++
++- A compact **flip-clock** readout of the current Pomodoro session with Start, Pause, Skip, and Reset controls, plus session dots and the phase label.
++- **Open full-screen timer** launches the same timer page the blocking redirect shows.
++- The popup and the blocked page control **one shared timer**: state lives in `chrome.storage.local["focusguard_timer_state"]`, so you can start a session from the popup and continue it on the full-screen page (or vice versa).
++
++### The blocked / timer page
++
++When you're redirected to the timer page, the countdown is rendered as a
++split-flap **flip clock** in a minimalist dark theme (near-black surfaces,
++hairline borders, and the three phase colors as the only accents). Controls
++let you start/pause, reset, or skip to the next phase, and **Space** toggles
++the timer from anywhere on the page. A floating 🐼 button opens Bao, an
++on-device AI panda who comments on your attempts to negotiate; **Escape** or
++the minimized timer strip closes the chat again.
++
++**Pomodoro settings**, adjustable via sliders in the popup's Timer tab:
++
+   - Work duration — 1 to 60 minutes (default 25)
+   - Short break — 1 to 30 minutes (default 5)
+   - Long break — 1 to 60 minutes (default 15)
+   - Rounds before a long break — 1 to 8 (default 4)
+ 
+-When you're redirected to the timer page, controls let you start/pause, reset, or skip to the next phase. Timer state persists across tab reloads (for up to 2 hours) but is tied to that tab — closing it ends the running timer.
++Timer state persists across tab reloads (for up to 2 hours) and is shared
++between the popup and the blocked page through `chrome.storage`.
+ 
+ ## How it works
+ 
+-A background service worker (`background.js`) listens for `chrome.webNavigation.onBeforeNavigate` on the top frame of every navigation. It checks whether blocking is enabled and matches the navigated hostname (with `www.` stripped) against your stored site list, either exactly or as a subdomain. On a match, it redirects the tab to the bundled timer page (`blocked/blocked.html`) with `chrome.tabs.update()` — this is a redirect after navigation starts, not a network-level block, so the original page may begin loading briefly before the swap happens.
++A background service worker (`background.js`) listens for `chrome.webNavigation.onBeforeNavigate` on the top frame of every navigation. It checks whether blocking is enabled and matches the navigated hostname (with `www.` stripped) against your stored site list, either exactly or as a subdomain. Sites in **Block** mode (friction level 3) are redirected to the bundled timer page (`blocked/blocked.html`) with `chrome.tabs.update()` — this is a redirect after navigation starts, not a network-level block, so the original page may begin loading briefly before the swap happens. Sites in **Strip** mode are left alone by the redirect path and handled in-page instead.
+ 
+-The extension has three isolated contexts — the background service worker, the popup, and the blocked/timer page — and they communicate **only through `chrome.storage`**. There is no content script and no message passing between them.
++The extension's contexts — the background service worker, the popup, the blocked/timer page, and the stripping content scripts — communicate **only through `chrome.storage`**. There is no message passing between them.
+ 
+ - Site list, master toggle, and Pomodoro settings live in `chrome.storage.sync`.
+-- Running timer state (phase, round, time remaining) lives in `chrome.storage.local`, saved on every tick so it can resume after a reload.
++- Running timer state (phase, round, time remaining) lives in `chrome.storage.local` under `focusguard_timer_state`, saved on every tick so it can resume after a reload. Both the popup's Timer tab and the blocked page read and write this single key, which is how the two surfaces stay in sync without message passing.
+ 
+ ## Permissions and privacy
+ 
+diff --git a/blocked/blocked-chat.css b/blocked/blocked-chat.css
+index 1f16579..b19c330 100644
+--- a/blocked/blocked-chat.css
++++ b/blocked/blocked-chat.css
+@@ -1,22 +1,57 @@
+ /* ═══════════════════════════════════════════════════════
+    FocusGuard — Panda Chat Overlay Styles
+    Full-viewport chat overlay with the judgmental panda.
+-   Reuses :root CSS variables from blocked.css.
++   Consumes the shared tokens from shared/theme.css.
+    ═══════════════════════════════════════════════════════ */
+ 
+ /* ── Chat Overlay ─────────────────── */
++/* Hidden by default so the Pomodoro controls underneath stay reachable;
++   the #chat-launcher button opens it (adds the `.open` class). */
+ .chat-overlay {
++  display: none;
++}
++
++.chat-overlay.open {
+   position: fixed;
+   inset: 0;
+   z-index: 100;
+   display: flex;
+   flex-direction: column;
+   background: rgba(8, 8, 15, 0.92);
+-  backdrop-filter: blur(12px);
+-  -webkit-backdrop-filter: blur(12px);
+   animation: chatFadeIn 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+ }
+ 
++/* ── Chat Launcher (floating) ─────── */
++#chat-launcher {
++  position: fixed;
++  right: 24px;
++  bottom: 24px;
++  /* Below the overlay (z-index:100) so an open chat covers it, but above
++     .main-container (z-index:1) and the animated background (z-index:0). */
++  z-index: 90;
++  width: 56px;
++  height: 56px; /* ≥44px touch target */
++  border-radius: 50%;
++  border: 1px solid var(--hairline);
++  background: var(--surface);
++  color: var(--text-primary);
++  font-size: 26px;
++  line-height: 1;
++  cursor: pointer;
++  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
++  transition: transform var(--transition), box-shadow var(--transition);
++}
++
++#chat-launcher:hover {
++  transform: scale(1.08);
++  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
++}
++
++#chat-launcher:focus-visible {
++  outline: 2px solid var(--focus-color);
++  outline-offset: 2px;
++}
++
+ @keyframes chatFadeIn {
+   from {
+     opacity: 0;
+@@ -36,22 +71,21 @@
+   min-height: 56px;
+   padding: 0 20px;
+   background: var(--bg-card);
+-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
++  border-bottom: 1px solid var(--hairline);
+   cursor: pointer;
+   transition: background var(--transition);
+ }
+ 
+ .timer-strip:hover {
+-  background: rgba(255, 255, 255, 0.06);
++  background: var(--hairline-faint);
+ }
+ 
+ .timer-strip-digits {
+-  font-family: 'Orbitron', monospace;
++  font-family: var(--font-display);
+   font-size: 20px;
+   font-weight: 700;
+   letter-spacing: 2px;
+   color: var(--text-primary);
+-  text-shadow: 0 0 20px var(--phase-glow);
+   font-variant-numeric: tabular-nums;
+ }
+ 
+@@ -71,7 +105,7 @@
+ 
+ .timer-strip-ring .ring-bg {
+   fill: none;
+-  stroke: rgba(255, 255, 255, 0.05);
++  stroke: var(--hairline-faint);
+   stroke-width: 3;
+ }
+ 
+@@ -100,13 +134,12 @@
+   align-items: center;
+   gap: 14px;
+   padding: 16px 20px;
+-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
++  border-bottom: 1px solid var(--hairline-faint);
+ }
+ 
+ .panda-avatar {
+   font-size: 40px;
+   line-height: 1;
+-  filter: drop-shadow(0 0 12px rgba(46, 213, 115, 0.3));
+   animation: pandaBounce 3s ease-in-out infinite;
+ }
+ 
+@@ -209,16 +242,14 @@
+ }
+ 
+ .msg-bubble--panda {
+-  background: var(--bg-card);
+-  backdrop-filter: blur(16px);
+-  -webkit-backdrop-filter: blur(16px);
+-  border: 1px solid rgba(255, 255, 255, 0.06);
++  background: var(--surface);
++  border: 1px solid var(--hairline);
+   color: var(--text-primary);
+   border-bottom-left-radius: 6px;
+ }
+ 
+ .msg-bubble--user {
+-  background: linear-gradient(135deg, var(--phase-color), rgba(46, 213, 115, 0.7));
++  background: var(--phase-color);
+   color: var(--bg-dark);
+   font-weight: 500;
+   border-bottom-right-radius: 6px;
+@@ -281,7 +312,7 @@
+   align-items: center;
+   gap: 12px;
+   padding: 16px 20px;
+-  border-top: 1px solid rgba(255, 255, 255, 0.06);
++  border-top: 1px solid var(--hairline);
+   background: rgba(255, 255, 255, 0.02);
+ }
+ 
+@@ -289,11 +320,11 @@
+   flex: 1;
+   height: 44px;
+   padding: 0 16px;
+-  background: var(--bg-card);
+-  border: 1px solid rgba(255, 255, 255, 0.08);
++  background: var(--surface);
++  border: 1px solid var(--hairline);
+   border-radius: 22px;
+   color: var(--text-primary);
+-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
++  font-family: var(--font-body);
+   font-size: 14px;
+   outline: none;
+   transition: border-color var(--transition), box-shadow var(--transition);
+@@ -342,6 +373,20 @@
+   cursor: not-allowed;
+ }
+ 
++/* ── Focus Visibility ─────────────── */
++/* Consistent with popup.css / blocked.css: 2px outline, 2px offset,
++   shared token. The text input keeps its border/glow :focus style
++   and gets the outline on keyboard focus only. */
++#chat-send-btn:focus-visible {
++  outline: 2px solid var(--focus-color);
++  outline-offset: 2px;
++}
++
++.chat-input:focus-visible {
++  outline: 2px solid var(--focus-color);
++  outline-offset: 2px;
++}
++
+ /* ── Download Progress UI ─────────── */
+ .download-progress {
+   display: flex;
+@@ -370,7 +415,7 @@
+   width: 100%;
+   max-width: 280px;
+   height: 6px;
+-  background: rgba(255, 255, 255, 0.08);
++  background: var(--hairline);
+   border-radius: 3px;
+   overflow: hidden;
+ }
+@@ -380,14 +425,13 @@
+   background: var(--phase-color);
+   border-radius: 3px;
+   transition: width 0.3s ease;
+-  box-shadow: 0 0 10px var(--phase-glow);
+ }
+ 
+ .download-progress-percent {
+   font-size: 14px;
+   font-weight: 600;
+   color: var(--phase-color);
+-  font-family: 'Orbitron', monospace;
++  font-family: var(--font-display);
+ }
+ 
+ /* ── Fallback Notice ──────────────── */
+diff --git a/blocked/blocked-chat.js b/blocked/blocked-chat.js
+index 102f5f8..404743e 100644
+--- a/blocked/blocked-chat.js
++++ b/blocked/blocked-chat.js
+@@ -45,12 +45,43 @@ let messageCount = 0;
+ let fallbackIndex = 0;
+ 
+ // ── DOM References ──────────────────────────────────────
++const chatOverlay = document.getElementById("chat-overlay");
++const chatLauncher = document.getElementById("chat-launcher");
+ const chatMessages = document.getElementById("chat-messages");
+ const chatInput = document.getElementById("chat-input");
+ const chatSendBtn = document.getElementById("chat-send-btn");
+ const pandaMood = document.getElementById("panda-mood");
+ const timerStrip = document.getElementById("timer-strip");
+ 
++// Overlay open/close — the overlay is hidden by default (CSS) so the
++// Pomodoro controls stay reachable. The launcher opens it; the timer
++// strip closes it. No state is persisted — the chat session survives
++// closing, only the overlay visibility changes.
++function openOverlay() {
++  if (!chatOverlay) return;
++  chatOverlay.classList.add("open");
++  if (chatInput) chatInput.focus();
++}
++
++function closeOverlay() {
++  if (!chatOverlay) return;
++  chatOverlay.classList.remove("open");
++}
++
++if (chatLauncher) chatLauncher.addEventListener("click", openOverlay);
++if (timerStrip) timerStrip.addEventListener("click", closeOverlay);
++
++// Escape closes the overlay while it's open (from any focus point inside
++// it — the chat input, send button, or message log). Closed state is a
++// no-op so blocked.js's Space shortcut keeps its own keydown path clear.
++document.addEventListener("keydown", (e) => {
++  if (e.key !== "Escape") return;
++  if (chatOverlay && chatOverlay.classList.contains("open")) {
++    closeOverlay();
++    if (chatLauncher) chatLauncher.focus();
++  }
++});
++
+ // ── Init ────────────────────────────────────────────────
+ document.addEventListener("DOMContentLoaded", async () => {
+   // Read the blocked domain from the existing page element
+diff --git a/blocked/blocked.css b/blocked/blocked.css
+index 8d38ef6..8657c71 100644
+--- a/blocked/blocked.css
++++ b/blocked/blocked.css
+@@ -1,31 +1,10 @@
+ /* ═══════════════════════════════════════════════════════
+    FocusGuard — Blocked Page / Pomodoro Timer Styles
+-   Premium dark UI with glassmorphism & animations
++   Minimalist dark UI — flat surfaces, hairline borders.
++   Palette lives in shared/theme.css (loaded first); this
++   sheet only adds the body.phase-* → --phase-color switch.
+    ═══════════════════════════════════════════════════════ */
+ 
+-:root {
+-  /* Phase colors */
+-  --work-color: #2ed573;
+-  --work-glow: rgba(46, 213, 115, 0.25);
+-  --short-break-color: #3498ff;
+-  --short-break-glow: rgba(52, 152, 255, 0.25);
+-  --long-break-color: #a29bfe;
+-  --long-break-glow: rgba(162, 155, 254, 0.25);
+-
+-  /* Current phase (set via JS) */
+-  --phase-color: var(--work-color);
+-  --phase-glow: var(--work-glow);
+-
+-  /* Base */
+-  --bg-dark: #08080f;
+-  --bg-card: rgba(255, 255, 255, 0.04);
+-  --text-primary: #e8e8f0;
+-  --text-secondary: #8888aa;
+-  --text-muted: #444466;
+-  --radius: 16px;
+-  --transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+-}
+-
+ * {
+   margin: 0;
+   padding: 0;
+@@ -33,7 +12,7 @@
+ }
+ 
+ body {
+-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
++  font-family: var(--font-body);
+   background: var(--bg-dark);
+   color: var(--text-primary);
+   min-height: 100vh;
+@@ -52,12 +31,11 @@ body {
+   overflow: hidden;
+ }
+ 
++/* Phase C — minimalist scheme: the glow blobs and drifting
++   particles are neutralized via CSS only (markup and
++   createParticles() JS stay intact). */
+ .bg-blob {
+-  position: absolute;
+-  border-radius: 50%;
+-  filter: blur(100px);
+-  opacity: 0.35;
+-  animation: blobFloat 20s ease-in-out infinite;
++  display: none;
+ }
+ 
+ .blob-1 {
+@@ -100,8 +78,7 @@ body {
+ 
+ /* ── Particles ────────────────────── */
+ .bg-particles {
+-  position: absolute;
+-  inset: 0;
++  display: none;
+ }
+ 
+ .particle {
+@@ -153,10 +130,8 @@ body {
+   gap: 10px;
+   padding: 10px 20px;
+   background: var(--bg-card);
+-  backdrop-filter: blur(20px);
+-  -webkit-backdrop-filter: blur(20px);
+-  border: 1px solid rgba(255, 255, 255, 0.06);
+-  border-radius: 100px;
++  border: 1px solid var(--hairline);
++  border-radius: var(--radius-pill);
+   font-size: 13px;
+   color: var(--text-secondary);
+   animation: fadeSlideDown 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+@@ -200,10 +175,8 @@ body {
+   gap: 8px;
+   padding: 6px 16px;
+   background: var(--bg-card);
+-  backdrop-filter: blur(16px);
+-  -webkit-backdrop-filter: blur(16px);
+-  border: 1px solid rgba(255, 255, 255, 0.08);
+-  border-radius: 100px;
++  border: 1px solid var(--hairline);
++  border-radius: var(--radius-pill);
+   font-size: 13px;
+   font-weight: 600;
+   letter-spacing: 0.5px;
+@@ -215,7 +188,7 @@ body {
+   height: 8px;
+   border-radius: 50%;
+   background: var(--phase-color);
+-  box-shadow: 0 0 10px var(--phase-glow);
++  box-shadow: 0 0 6px var(--phase-glow);
+   transition: background var(--transition), box-shadow var(--transition);
+   animation: pulseDot 2s ease-in-out infinite;
+ }
+@@ -226,16 +199,18 @@ body {
+ }
+ 
+ /* ── Timer Ring ───────────────────── */
++/* Phase B — the SVG ring is superseded by the flip clock + thin linear
++   progress bar. Hidden via CSS only: the markup and updateRing() code
++   stay intact (zero risk). */
+ .timer-ring-container {
+   position: relative;
+-  width: 260px;
+-  height: 260px;
++  display: flex;
++  flex-direction: column;
++  align-items: center;
+ }
+ 
+ .timer-ring {
+-  width: 100%;
+-  height: 100%;
+-  transform: rotate(-90deg);
++  display: none;
+ }
+ 
+ .ring-bg {
+@@ -256,24 +231,31 @@ body {
+ }
+ 
+ .timer-display {
+-  position: absolute;
+-  inset: 0;
+   display: flex;
+   flex-direction: column;
+   align-items: center;
+-  justify-content: center;
+-  gap: 4px;
++  gap: 16px;
+ }
+ 
++/* Phase B — the flip clock renders the digits now; this span is kept
++   (visually hidden) exactly as before because it backs
++   window.__focusguardTimer.getDisplay() and the timer strip. */
+ .timer-digits {
+-  font-family: 'Orbitron', monospace;
+-  font-size: 56px;
+-  font-weight: 700;
+-  letter-spacing: 3px;
+-  color: var(--text-primary);
+-  text-shadow: 0 0 30px var(--phase-glow);
+-  transition: text-shadow 1.5s ease;
+-  font-variant-numeric: tabular-nums;
++  position: absolute;
++  width: 1px;
++  height: 1px;
++  padding: 0;
++  margin: -1px;
++  overflow: hidden;
++  clip: rect(0, 0, 0, 0);
++  white-space: nowrap;
++  border: 0;
++}
++
++/* On the blocked page the full-size variant is a touch larger than the
++   flip-clock default; the popup can scale it down via --flip-size. */
++.timer-display .flip-clock {
++  --flip-size: 76px;
+ }
+ 
+ .timer-phase-label {
+@@ -285,6 +267,26 @@ body {
+   transition: color var(--transition);
+ }
+ 
++/* ── Linear phase progress (replaces the SVG ring) ────── */
++.phase-progress {
++  width: min(320px, 78vw);
++  height: 2px;
++  margin-top: 4px;
++  border-radius: 1px;
++  background: var(--hairline);
++  overflow: hidden;
++}
++
++.phase-progress-fill {
++  display: block;
++  width: 100%;
++  height: 100%;
++  background: var(--phase-color);
++  transform: scaleX(0);
++  transform-origin: left center;
++  transition: transform 0.5s linear, background var(--transition);
++}
++
+ /* ── Session Progress ─────────────── */
+ .session-progress {
+   display: flex;
+@@ -316,7 +318,7 @@ body {
+ .dot.active {
+   background: var(--phase-color);
+   border-color: var(--phase-color);
+-  box-shadow: 0 0 10px var(--phase-glow);
++  box-shadow: 0 0 6px var(--phase-glow);
+   transition: background var(--transition), border-color var(--transition), box-shadow var(--transition);
+ }
+ 
+@@ -350,17 +352,13 @@ body {
+   border-radius: 50%;
+   background: var(--phase-color);
+   color: var(--bg-dark);
+-  box-shadow:
+-    0 4px 20px var(--phase-glow),
+-    0 0 60px var(--phase-glow);
++  box-shadow: 0 2px 14px var(--phase-glow);
+   transition: all var(--transition), background 1.5s ease;
+ }
+ 
+ .btn-start:hover {
+   transform: scale(1.08);
+-  box-shadow:
+-    0 6px 30px var(--phase-glow),
+-    0 0 80px var(--phase-glow);
++  box-shadow: 0 4px 20px var(--phase-glow);
+ }
+ 
+ .btn-start:active {
+@@ -377,9 +375,7 @@ body {
+   height: 50px;
+   border-radius: 50%;
+   background: var(--bg-card);
+-  backdrop-filter: blur(16px);
+-  -webkit-backdrop-filter: blur(16px);
+-  border: 1px solid rgba(255, 255, 255, 0.08);
++  border: 1px solid var(--hairline);
+   color: var(--text-secondary);
+ }
+ 
+@@ -432,18 +428,23 @@ body.phase-long-break {
+   animation: pulseRing 0.6s ease 3;
+ }
+ 
++/* ── Focus Visibility ─────────────── */
++/* Keyboard focus only (:focus-visible) — mouse clicks on the round
++   controls must not leave a ring. 2px outline, 2px offset, shared
++   token, same as popup.css and blocked-chat.css. */
++.btn-control:focus-visible {
++  outline: 2px solid var(--focus-color);
++  outline-offset: 2px;
++}
++
+ /* ── Responsive ───────────────────── */
+ @media (max-height: 600px) {
+   .main-container {
+     gap: 16px;
+     padding: 20px;
+   }
+-  .timer-ring-container {
+-    width: 200px;
+-    height: 200px;
+-  }
+-  .timer-digits {
+-    font-size: 42px;
++  .timer-display .flip-clock {
++    --flip-size: 56px;
+   }
+ }
+ 
+diff --git a/blocked/blocked.html b/blocked/blocked.html
+index eb19674..f187ae1 100644
+--- a/blocked/blocked.html
++++ b/blocked/blocked.html
+@@ -5,6 +5,8 @@
+   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+   <title>Stay Focused — FocusGuard</title>
+   <link rel="stylesheet" href="../fonts/fonts.css">
++  <link rel="stylesheet" href="../shared/theme.css">
++  <link rel="stylesheet" href="../lib/flip-clock.css">
+   <link rel="stylesheet" href="blocked.css">
+   <link rel="stylesheet" href="blocked-chat.css">
+ </head>
+@@ -51,8 +53,17 @@
+           </defs>
+         </svg>
+         <div class="timer-display">
++          <!-- Visually hidden (CSS) but kept in the DOM: it backs
++               window.__focusguardTimer.getDisplay() and stays the source
++               of truth for the timer strip. The flip clock below is the
++               visual readout. -->
+           <span class="timer-digits" id="timer-digits" aria-hidden="true">25:00</span>
++          <div id="flip-clock" aria-hidden="true"></div>
+           <span class="timer-phase-label" id="timer-phase-label">WORK</span>
++          <!-- Thin linear phase-progress bar (replaces the SVG ring) -->
++          <div class="phase-progress" id="phase-progress" aria-hidden="true">
++            <span class="phase-progress-fill" id="phase-progress-fill"></span>
++          </div>
+         </div>
+         <!-- Accessible periodic summary: updated once per minute boundary and
+              on phase changes, not every second (see blocked.js announceMinuteSummary). -->
+@@ -124,6 +135,9 @@
+     </div>
+   </div>
+ 
++  <!-- Floating launcher for the Bao chat overlay (hidden by default) -->
++  <button id="chat-launcher" aria-label="Talk to Bao the panda">🐼</button>
++
+   <script type="module" src="blocked.js"></script>
+   <script type="module" src="blocked-chat.js"></script>
+ </body>
+diff --git a/blocked/blocked.js b/blocked/blocked.js
+index c37ebcf..703580e 100644
+--- a/blocked/blocked.js
++++ b/blocked/blocked.js
+@@ -7,13 +7,18 @@ import {
+   initialState,
+   phaseDuration,
+   remainingSeconds,
+-  advancePhase,
+   formatTime,
++  start,
++  pause,
++  reset,
++  skip,
++  isStateFresh,
++  reviveState,
+ } from "../lib/timer.js";
++import { createFlipClock } from "../lib/flip-clock.js";
+ 
+ // ── Constants ───────────────────────────────────────────
+ const STORAGE_KEY = "focusguard_timer_state";
+-const STALE_MS = 2 * 60 * 60 * 1000; // discard saved state older than this
+ const HEARTBEAT_MS = 10 * 1000; // persistence heartbeat while running
+ 
+ const MOTIVATIONAL_QUOTES = [
+@@ -38,6 +43,13 @@ let timerState = initialState(settings);
+ let tickHandle = null;
+ let heartbeatHandle = null;
+ let lastAnnouncedMinute = null;
++let flipClock = null; // instantiated once at DOMContentLoaded
++// Value-based self-write suppression (ADR-0002): the `savedAt` of the last
++// state THIS page persisted. An onChanged event carrying that exact value
++// is our own write echoing back and must not trigger a re-adopt/re-render.
++// Value-based (not a bare boolean flag) so an external write — e.g. a popup
++// pause — landing between a pending save and its echo is never swallowed.
++let lastWrittenSavedAt = null;
+ 
+ // ── DOM References ──────────────────────────────────────
+ const timerDigits = document.getElementById("timer-digits");
+@@ -55,6 +67,8 @@ const btnReset = document.getElementById("btn-reset");
+ const btnSkip = document.getElementById("btn-skip");
+ const iconPlay = btnStart.querySelector(".icon-play");
+ const iconPause = btnStart.querySelector(".icon-pause");
++const flipClockMount = document.getElementById("flip-clock");
++const phaseProgressFill = document.getElementById("phase-progress-fill");
+ 
+ // Ring geometry — read `r` off the SVG circle instead of hardcoding it, so the
+ // two never desync. `strokeDasharray` is set once here rather than every tick.
+@@ -81,11 +95,17 @@ document.addEventListener("DOMContentLoaded", async () => {
+ 
+   timerState = initialState(settings);
+ 
++  // Mount the flip clock (visual readout). #timer-digits stays the source
++  // of truth for window.__focusguardTimer.getDisplay().
++  if (flipClockMount) {
++    flipClock = createFlipClock(flipClockMount);
++  }
++
+   // Try to restore saved timer state
+   try {
+     const saved = await chrome.storage.local.get([STORAGE_KEY]);
+     const restored = saved[STORAGE_KEY];
+-    if (restored && Date.now() - (restored.savedAt || 0) < STALE_MS) {
++    if (isStateFresh(restored, Date.now())) {
+       timerState = reviveState(restored, settings, Date.now());
+     }
+   } catch (e) {
+@@ -117,8 +137,12 @@ document.addEventListener("DOMContentLoaded", async () => {
+   [btnStart, btnReset, btnSkip].forEach((btn) => btn.addEventListener("click", unlockAudio));
+ 
+   // B4 — react to settings changes made elsewhere (e.g. the popup) while
+-  // this page is open.
+-  chrome.storage.onChanged?.addListener(handleSettingsChanged);
++  // this page is open. The local-area branch (ADR-0002) adopts external
++  // writes to the shared timer state as ground truth.
++  chrome.storage.onChanged?.addListener((changes, area) => {
++    handleSettingsChanged(changes, area);
++    handleTimerStateChanged(changes, area);
++  });
+ 
+   // B3 — persist on the ways a tab can disappear without warning.
+   document.addEventListener("pagehide", saveState);
+@@ -128,30 +152,8 @@ document.addEventListener("DOMContentLoaded", async () => {
+ });
+ 
+ // ── Resume / Restore ─────────────────────────────────────
+-function reviveState(restored, settings, now) {
+-  let state = {
+-    phase: restored.phase || "work",
+-    currentRound: restored.currentRound || 1,
+-    totalRounds: restored.totalRounds || settings.roundsBeforeLong,
+-    totalTime: restored.totalTime || phaseDuration(restored.phase || "work", settings),
+-    isRunning: !!restored.isRunning,
+-    endsAt: restored.endsAt ?? null,
+-    remaining: restored.remaining ?? null,
+-  };
+-
+-  if (state.isRunning && state.endsAt != null && remainingSeconds(state, now) <= 0) {
+-    // The deadline passed while the tab was closed/backgrounded-and-killed.
+-    // Advance exactly one phase rather than showing a frozen 00:00 — and
+-    // since it was running, advancePhase() keeps it running with a fresh
+-    // deadline for the new phase. Cascading through more than one elapsed
+-    // phase is intentionally not attempted.
+-    state = advancePhase(state, settings, now);
+-  } else if (!state.isRunning && state.remaining == null) {
+-    state.remaining = state.totalTime;
+-  }
+-
+-  return state;
+-}
++// reviveState() + isStateFresh() live in lib/timer.js — shared with the
++// popup so both surfaces restore identically (ADR-0002).
+ 
+ // ── Timer Controls ──────────────────────────────────────
+ function toggleTimer() {
+@@ -162,18 +164,37 @@ function toggleTimer() {
+   }
+ }
+ 
++// Space toggles the timer from anywhere on the page. Guards:
++//  - typing contexts (input/textarea/select) keep Space as a character
++//  - a focused button already activates on Space — skipping prevents a
++//    double toggle from the same keypress
++//  - while the Bao chat overlay is open, Space belongs to the chat
++function isTypingContext() {
++  const el = document.activeElement;
++  if (!el || !el.tagName) return false;
++  return (
++    el.tagName === "INPUT" ||
++    el.tagName === "TEXTAREA" ||
++    el.tagName === "SELECT" ||
++    el.tagName === "BUTTON"
++  );
++}
++
++document.addEventListener("keydown", (e) => {
++  if (e.key !== " " && e.code !== "Space") return;
++  if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
++  if (isTypingContext()) return;
++  const overlay = document.getElementById("chat-overlay");
++  if (overlay && overlay.classList.contains("open")) return;
++
++  e.preventDefault(); // stop page scroll / late button activation
++  toggleTimer();
++});
++
+ function startTimer() {
+   if (timerState.isRunning) return;
+ 
+-  const now = Date.now();
+-  const remaining = timerState.remaining != null ? timerState.remaining : timerState.totalTime;
+-
+-  timerState = {
+-    ...timerState,
+-    isRunning: true,
+-    endsAt: now + remaining * 1000,
+-    remaining: null,
+-  };
++  timerState = start(timerState, Date.now());
+ 
+   updatePlayPauseIcon();
+   armTicker();
+@@ -183,22 +204,19 @@ function startTimer() {
+ }
+ 
+ function pauseTimer() {
+-  const now = Date.now();
+-  const remaining = remainingSeconds(timerState, now);
+-
+-  timerState = { ...timerState, isRunning: false, endsAt: null, remaining };
++  timerState = pause(timerState, Date.now());
+ 
+   disarmTicker();
+   disarmHeartbeat();
+   updatePlayPauseIcon();
+-  renderTime(remaining);
++  renderTime(timerState.remaining);
+   saveState();
+ }
+ 
+ function resetTimer() {
+   disarmTicker();
+   disarmHeartbeat();
+-  timerState = initialState(settings); // B5 — re-reads durations/totalRounds from settings
++  timerState = reset(settings); // B5 — re-reads durations/totalRounds from settings
+   applyPhaseUI();
+   saveState();
+ }
+@@ -207,7 +225,7 @@ function skipPhase() {
+   const now = Date.now();
+   disarmTicker();
+   disarmHeartbeat();
+-  timerState = advancePhase({ ...timerState, isRunning: false }, settings, now);
++  timerState = skip(timerState, settings, now);
+   applyPhaseUI();
+   saveState();
+ }
+@@ -248,7 +266,7 @@ function tick() {
+   if (remaining <= 0) {
+     playNotificationSound();
+     pulseRing();
+-    timerState = advancePhase({ ...timerState, isRunning: false }, settings, now);
++    timerState = skip(timerState, settings, now);
+     disarmTicker();
+     disarmHeartbeat();
+     applyPhaseUI();
+@@ -291,6 +309,43 @@ function handleSettingsChanged(changes, area) {
+   saveState();
+ }
+ 
++// ADR-0002 — external changes to the shared timer state are ground truth.
++// The popup (or another blocked tab) paused/started/skipped while this page
++// was open: adopt the written value, re-arm or disarm the ticker+heartbeat
++// to match, and re-render. Without this, the 10s heartbeat would clobber a
++// popup pause and a popup Start would be invisible until reload.
++function handleTimerStateChanged(changes, area) {
++  if (area !== "local") return;
++  const change = changes[STORAGE_KEY];
++  if (!change || !change.newValue) return;
++  const incoming = change.newValue;
++
++  // Our own saveState() echoing back — identifiable by the exact `savedAt`
++  // we wrote (see lastWrittenSavedAt).
++  if (incoming.savedAt != null && incoming.savedAt === lastWrittenSavedAt) return;
++
++  const now = Date.now();
++  timerState = reviveState(incoming, settings, now);
++
++  disarmTicker();
++  disarmHeartbeat();
++  if (timerState.isRunning) {
++    armTicker();
++    armHeartbeat();
++  }
++  applyPhaseUI();
++
++  // If revival advanced an expired running session one phase, persist the
++  // corrected state so both surfaces converge on it.
++  if (
++    incoming.isRunning &&
++    incoming.endsAt != null &&
++    remainingSeconds(incoming, now) <= 0
++  ) {
++    saveState();
++  }
++}
++
+ // ── Display Updates ─────────────────────────────────────
+ function applyPhaseUI() {
+   const now = Date.now();
+@@ -302,8 +357,11 @@ function applyPhaseUI() {
+ }
+ 
+ function renderTime(remainingSecs) {
+-  timerDigits.textContent = formatTime(remainingSecs);
++  const display = formatTime(remainingSecs);
++  timerDigits.textContent = display;
++  if (flipClock) flipClock.setTime(display);
+   updateRing(remainingSecs);
++  updateProgressBar(remainingSecs);
+   announceMinuteSummary(remainingSecs);
+ }
+ 
+@@ -313,6 +371,15 @@ function updateRing(remainingSecs) {
+   ringProgress.style.strokeDashoffset = String(offset);
+ }
+ 
++// Thin linear phase-progress bar (the SVG ring is hidden via CSS but its
++// update path above is kept — zero risk). Transform-only update, clamped.
++function updateProgressBar(remainingSecs) {
++  if (!phaseProgressFill) return;
++  const progress = timerState.totalTime > 0 ? remainingSecs / timerState.totalTime : 1;
++  const elapsed = Math.min(1, Math.max(0, 1 - progress));
++  phaseProgressFill.style.transform = `scaleX(${elapsed})`;
++}
++
+ function setPhaseDisplay(phase) {
+   // Remove all phase classes
+   document.body.classList.remove("phase-work", "phase-short-break", "phase-long-break");
+@@ -385,11 +452,13 @@ function pulseRing() {
+ 
+ // ── Persistence ─────────────────────────────────────────
+ async function saveState() {
++  const savedAt = Date.now();
++  lastWrittenSavedAt = savedAt; // suppress this write's onChanged echo
+   try {
+     await chrome.storage.local.set({
+       [STORAGE_KEY]: {
+         ...timerState,
+-        savedAt: Date.now(),
++        savedAt,
+       },
+     });
+   } catch (e) {
+diff --git a/blocked/breathing.html b/blocked/breathing.html
+index b435ef5..792bd68 100644
+--- a/blocked/breathing.html
++++ b/blocked/breathing.html
+@@ -5,7 +5,11 @@
+   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+   <title>FocusGuard — Breathe</title>
+   <link rel="stylesheet" href="../fonts/fonts.css">
++  <link rel="stylesheet" href="../shared/theme.css">
+   <style>
++    /* Page-local layout only — every color comes from shared/theme.css
++       (loaded above). Accent: the long-break violet, the single hue
++       for this calm-down interstitial. */
+     * {
+       margin: 0;
+       padding: 0;
+@@ -13,9 +17,9 @@
+     }
+ 
+     body {
+-      font-family: 'Inter', system-ui, sans-serif;
+-      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+-      color: #e4e4e7;
++      font-family: var(--font-body);
++      background: var(--bg-dark);
++      color: var(--text-primary);
+       min-height: 100vh;
+       display: flex;
+       align-items: center;
+@@ -41,18 +45,18 @@
+     }
+ 
+     h1 {
+-      font-family: 'Orbitron', monospace;
++      font-family: var(--font-display);
+       font-size: 1.5rem;
+       margin-bottom: 1rem;
+-      color: #a78bfa;
++      color: var(--long-break-color);
+     }
+ 
+     .breathing-circle {
+       width: 200px;
+       height: 200px;
+       border-radius: 50%;
+-      background: radial-gradient(circle, rgba(167, 139, 250, 0.3) 0%, rgba(167, 139, 250, 0.1) 70%);
+-      border: 3px solid #a78bfa;
++      background: var(--long-break-glow);
++      border: 1px solid var(--long-break-color);
+       margin: 2rem auto;
+       display: flex;
+       align-items: center;
+@@ -67,14 +71,14 @@
+ 
+     .breathing-text {
+       font-size: 1.2rem;
+-      color: #e4e4e7;
++      color: var(--text-primary);
+       font-weight: 500;
+     }
+ 
+     .timer-display {
+-      font-family: 'Orbitron', monospace;
++      font-family: var(--font-display);
+       font-size: 3rem;
+-      color: #a78bfa;
++      color: var(--long-break-color);
+       margin: 1rem 0;
+     }
+ 
+@@ -85,33 +89,33 @@
+     .intention-prompt label {
+       display: block;
+       margin-bottom: 0.5rem;
+-      color: #a1a1aa;
++      color: var(--text-secondary);
+       font-size: 0.9rem;
+     }
+ 
+     .intention-input {
+       width: 100%;
+       padding: 0.75rem;
+-      border: 2px solid #3f3f46;
+-      border-radius: 0.5rem;
+-      background: #27272a;
+-      color: #e4e4e7;
++      border: 1px solid var(--hairline);
++      border-radius: var(--radius-sm);
++      background: var(--surface);
++      color: var(--text-primary);
+       font-size: 1rem;
+       font-family: inherit;
+     }
+ 
+     .intention-input:focus {
+       outline: none;
+-      border-color: #a78bfa;
++      border-color: var(--long-break-color);
+     }
+ 
+     .continue-btn {
+       margin-top: 2rem;
+       padding: 1rem 2rem;
+-      background: #a78bfa;
+-      color: #1a1a2e;
++      background: var(--long-break-color);
++      color: var(--bg-dark);
+       border: none;
+-      border-radius: 0.5rem;
++      border-radius: var(--radius-sm);
+       font-size: 1rem;
+       font-weight: 600;
+       cursor: pointer;
+@@ -126,18 +130,18 @@
+     }
+ 
+     .continue-btn.active:hover {
+-      background: #c4b5fd;
++      filter: brightness(1.12);
+       transform: translateY(-2px);
+     }
+ 
+     .blocked-domain {
+       margin-top: 1rem;
+       font-size: 0.85rem;
+-      color: #71717a;
++      color: var(--text-muted);
+     }
+ 
+     .blocked-domain strong {
+-      color: #a78bfa;
++      color: var(--long-break-color);
+     }
+   </style>
+ </head>
+diff --git a/docs/QA-TEST-PLAN.md b/docs/QA-TEST-PLAN.md
+index b3c62a7..8ac789f 100644
+--- a/docs/QA-TEST-PLAN.md
++++ b/docs/QA-TEST-PLAN.md
+@@ -19,6 +19,7 @@ The four bugs and their regression IDs:
+ | `chrome.storage.sync` write-quota exhaustion (120 writes/min) from dragging a settings slider | `SET-05` |
+ | Wrong-site deletion race when deleting two sites in quick succession | `CRUD-09` |
+ | CSP-blocked inline event handler (MV3's default CSP silently blocks `onclick="…"` attributes — the control looks dead, no visible error unless the console is open) | `CC-05` |
++| Chat overlay permanently covering the blocked page (the Bao overlay rendered full-viewport with no close mechanism, so Start/Pause/Reset/Skip were unreachable; fixed in v1.1.0 by hiding it behind a launcher) | `UI-06` |
+ 
+ ---
+ 
+@@ -199,7 +200,30 @@ Tip: For any case requiring a full phase or cycle, first set short durations in
+ 
+ ---
+ 
+-## 8. Results Template
++## 8. Two-Tab Popup, Flip Clock & Chat Overlay (v1.1.0 UI)
++
++Covers the v1.1.0 redesign: the popup is segmented into a **Blocklist** tab
++and a **Timer** tab, the blocked page renders the countdown as a split-flap
++**flip clock**, the Bao chat overlay is hidden behind a floating launcher,
++and the popup's Timer tab shares one timer state with the blocked page via
++`chrome.storage.local["focusguard_timer_state"]`.
++
++| ID | Case | Steps | Expected |
++|---|---|---|---|
++| `UI-01` | Two-tab popup switching | 1. Open the popup. 2. Click **Timer**, then **Blocklist**, several times. 3. Close the popup on the Timer tab and reopen it. | Exactly one panel is visible at a time; content never overlaps or blanks. The tab buttons expose `role="tab"` with `aria-selected` reflecting the visible panel (inspect the DOM). The last open tab survives close/reopen (persisted in `localStorage`). Arrow Left/Right moves between the two tab buttons when one is focused. |
++| `UI-02` | Popup Timer tab controls | Open the Timer tab and click Start / Pause / Skip / Reset. | The compact flip clock and phase/round readout update for every control (Start begins the countdown, Pause freezes it, Skip advances the phase, Reset restores the full work phase). All writes land in `chrome.storage.local.get(["focusguard_timer_state"])`. |
++| `UI-03` | Popup → blocked page timer sync | 1. In the popup Timer tab, click **Start**. 2. Click **Open full-screen timer**. 3. Watch the new tab. | The blocked page opens already running with the same phase/remaining time the popup showed — both surfaces read the same `focusguard_timer_state` key, so control passes between them without any message passing. Pause from either surface; the other reflects it within ~1s of its next storage event/reload. |
++| `UI-04` | Blocked page → popup timer sync | 1. Start the timer on the blocked page. 2. Open the popup and switch to the Timer tab while the page keeps running. | The popup flip clock shows the running countdown (live-updating via `chrome.storage.onChanged`) and its Start button reflects the running state. Pausing in the popup pauses the blocked page's timer too. |
++| `UI-05` | Flip clock rendering | On the blocked page, start the timer and watch several ticks including a minute rollover (e.g. `25:00 → 24:59`, and let it reach `24:00` or set a 1–2 min work duration). | Digits render as split-flap cards in Orbitron; on each tick only the digits that actually changed flip (at `25:00 → 24:59` the minutes-tens "2" stays static while the other three flip; at a minute rollover the minute cards flip once, not once per second). No layout shift during flips, and with OS "Reduce motion" enabled the digits swap instantly with no animation. |
++| `UI-06` — **chat overlay regression (PRIMARY BUG)** | Chat launcher open/close | 1. On the blocked page, confirm the timer controls are clickable immediately (no overlay covering them). 2. Click the floating 🐼 button (bottom-right). 3. Click the minimized timer strip at the top of the overlay. 4. Reopen and try the chat input. | The overlay is hidden at load; the launcher opens it (focus moves to the chat input); the timer strip closes it again. While closed, Start/Pause/Reset/Skip all respond to clicks. The timer strip keeps live-updating while the overlay is open. |
++| `UI-07` | Space toggles the timer | 1. On the blocked page with nothing focused (click the background first), press **Space**. 2. Press Space again. 3. Open the chat overlay via the launcher and press Space with the chat input focused. | Steps 1–2: timer starts then pauses (same as clicking Start). Step 3: nothing happens — Space is ignored while typing in the chat input or while the overlay is open. Space also never scrolls the page. |
++| `UI-08` | Escape closes the chat | Open the chat overlay via the launcher, then press **Escape**. | The overlay closes and focus returns to the launcher button. Pressing Escape while the overlay is already closed does nothing. |
++| `UI-09` | Strip vs Block onboarding | 1. With an empty blocklist, open the Blocklist tab. 2. Add a site and inspect its card. 3. In the card's mode button, cycle it to `block` (friction level 3) and navigate to that domain. | The Blocklist tab shows a static hint explaining that sites start in **Strip** mode and that **Block** mode triggers the full-screen Pomodoro redirect. The new site's card shows mode `strip` by default and does **not** redirect when visited in strip mode; only after switching to `block` (level 3) does navigation redirect to the timer page. |
++| `UI-10` | Minimalist theme + focus outlines | Keyboard-Tab through every control on both surfaces (see `CC-03`) and inspect the stylesheets. | Every keyboard-focused control shows a 2px outline with a 2px offset in the current phase color (shared `--focus-color` token). No surface uses hues beyond the three phase colors plus the semantic error red; the popup footer reads `FocusGuard v1.1.0`, matching `manifest.json`. |
++
++---
++
++## 9. Results Template
+ 
+ Copy this table per test pass. One row per case executed; leave rows out for cases not run this pass and say so in the summary.
+ 
+@@ -219,5 +243,7 @@ Full execution of all ~50 cases above is expensive; run this subset every releas
+ 6. `INST-02` — upgrade never clobbers an existing site list
+ 7. `BLK-01`, `BLK-02`, `BLK-05` — exact match, subdomain match, and the "contains but isn't a subdomain" non-match (the core matching correctness the whole extension depends on)
+ 8. `BLK-10`, `BLK-11` — master toggle and per-site toggle both actually gate blocking
++9. `UI-06` — chat overlay must not cover the timer controls (v1.1.0 regression)
++10. `UI-03`, `UI-04` — popup ↔ blocked page stay in agreement on the shared timer state
+ 
+-If all seven pass with a clean console, the release is safe to ship pending the rest of the suite at normal cadence (e.g. before a major version bump, or after any change touching `background.js`, `lib/matcher.js`, `lib/domain.js`, or the storage schema).
++If all ten pass with a clean console, the release is safe to ship pending the rest of the suite at normal cadence (e.g. before a major version bump, or after any change touching `background.js`, `lib/matcher.js`, `lib/domain.js`, or the storage schema).
+diff --git a/docs/adr/0002-shared-timer-state-contract.md b/docs/adr/0002-shared-timer-state-contract.md
+new file mode 100644
+index 0000000..518a46b
+--- /dev/null
++++ b/docs/adr/0002-shared-timer-state-contract.md
+@@ -0,0 +1,34 @@
++# ADR-0002: Shared Timer State Contract Between Popup and Blocked Page
++
++## Status
++
++Accepted
++
++## Context
++
++Before v1.1.0, the Pomodoro timer ran only on the blocked page (`blocked/blocked.js`), and `chrome.storage.local["focusguard_timer_state"]` was a persistence detail of that single surface. The v1.1.0 popup redesign adds a **Timer tab** with full controls (Start / Pause / Skip / Reset) and its own flip-clock readout, giving the same timer **two writers and two readers** in two isolated contexts. MV3 forbids message passing shortcuts we'd otherwise reach for (no persistent ports between popup and extension pages worth the wiring), and the repo's standing convention is that contexts communicate only through `chrome.storage`.
++
++Two risks had to be addressed:
++
++- **Write races**: both surfaces do read-modify-write cycles against one key; two rapid controls (e.g. Start then Skip) in either surface must not clobber each other.
++- **Stale views**: whichever surface is open must reflect changes made in the other without polling.
++
++## Decision
++
++Keep a **single shared state object** in `chrome.storage.local["focusguard_timer_state"]` and make storage the only communication channel:
++
++- **Shape**: the timer state fields (`phase`, `currentRound`, `totalRounds`, `totalTime`, `isRunning`, `endsAt`, `remaining`) plus `savedAt` (epoch ms). All phase math goes through the pure transitions in `lib/timer.js` (`start`, `pause`, `reset`, `skip`) so both surfaces compute identically.
++- **Deadline-based timing**: `endsAt` is the source of truth while running; `remaining` only while paused. A revived session derives its display from `Date.now()`, so neither surface needs to trust the other's tick cadence. If a deadline expires while a surface is open, that surface's ticker runs the completion transition; if a restored state's deadline already passed, it is advanced exactly one phase.
++- **Serialized writes**: every write in each surface goes through a promise-chain mutation queue (`queueTimerMutation` in the popup, `saveState()` call sites in the blocked page), mirroring the `queueSiteMutation` pattern used for the sites array.
++- **`chrome.storage.onChanged` is authority**: each surface treats external changes to the key (area `local`) as ground truth, re-renders, and re-arms/disarms its ticker+heartbeat to match. Self-triggered events are suppressed **by value** — an event is skipped only when its `savedAt` equals the one the surface itself last wrote, so a concurrent external write is never swallowed by a bare boolean flag. Restore applies the same rules on both surfaces: the 2-hour staleness gate (`STALE_MS` / `isStateFresh`) and the revival logic (`reviveState`) live in `lib/timer.js` so the popup and the blocked page cannot drift.
++
++## Consequences
++
++### Positive
++- No new permissions and no message passing — the contract rides entirely on the existing `storage` permission.
++- Control handoff works both directions (start in popup → continue full-screen, and vice versa) with zero extra protocol.
++- Both surfaces already had `storage.onChanged` listeners, so live sync was nearly free.
++
++### Negative
++- The key's shape is now a two-consumer contract: any field change must be made in `lib/timer.js` and verified against both surfaces' tests.
++- Timing accuracy still depends on whichever surface is alive; when **both** the popup and the blocked tab are closed, nothing ticks (deadline revival on next open keeps the displayed time correct, matching the rejected `chrome.alarms` alternative in `docs/plan/01-flip-clock-tabs-redesign.md`).
+diff --git a/docs/plan/01-flip-clock-tabs-redesign.md b/docs/plan/01-flip-clock-tabs-redesign.md
+new file mode 100644
+index 0000000..bd86489
+--- /dev/null
++++ b/docs/plan/01-flip-clock-tabs-redesign.md
+@@ -0,0 +1,94 @@
++# FocusGuard — Flip Clock Redesign, Timer Fix & Popup Tabs
++
++> Feature branch: `feature/pomodoro-improvements`
++> Status: Approved plan (synthesized from 3 independent research passes: simplicity, performance, minimal-change)
++
++## Summary
++
++Three independent research passes converged on one confirmed root cause: **the Bao panda chat overlay permanently covers the blocked page** (`.chat-overlay` at `blocked/blocked-chat.css:8-18` is `position:fixed; inset:0; z-index:100; display:flex` with **no close mechanism anywhere**), so the Start/Pause/Reset/Skip buttons never receive clicks — the timer engine itself (`lib/timer.js`) is correct. The plan fixes that bug, replaces the SVG ring with a reusable flip-clock component, unifies the two divergent color palettes into one minimalist token sheet, and restructures the popup into a two-tab UI with a live Timer tab.
++
++**Work setup (before coding):** all implementation happens on branch/worktree `feature/pomodoro-improvements`. Project constraints from `AGENTS.md`: vanilla JS, **no build step**, **zero network requests** (no new `<link>`, `fetch`, or remote assets), tests via Vitest, lint via ESLint.
++
++## Verified Root Cause
++
++- `blocked/blocked.html:104-125` — `<div class="chat-overlay" id="chat-overlay">` rendered unconditionally on every load.
++- `blocked/blocked-chat.css:8-18` — full-viewport, near-opaque layer at `z-index:100`; `.main-container` (timer + controls) sits at `z-index:1` (`blocked.css:137-147`).
++- No JS or CSS anywhere hides, opens, or toggles the overlay. `#btn-start` handler is correctly wired (`blocked.js:112`) but unreachable. Regression introduced by commit `aabbcb9` (panda chat feature).
++- Pre-existing unrelated test failure: `tests/popup/popup.test.js:228` ("rapid-succession toggle"), plus a debug `console.log` at line 224 — fix as part of this work.
++
++## Phase A — Fix the timer bug (gates everything)
++
++Files: `blocked/blocked-chat.css`, `blocked/blocked.html`, `blocked/blocked-chat.js`, new `tests/blocked/blocked.test.js`
++
++1. **Hide overlay by default**: change `.chat-overlay` to `display:none`; add `.chat-overlay.open { display:flex }` (keep existing fade-in animation).
++2. **Add launcher**: one floating `#chat-launcher` button (🐼 "Talk to Bao") in `blocked.html` after the overlay div, styled with existing tokens, ≥44px touch target, `aria-label`.
++3. **Add close path**: in `blocked-chat.js` (~20 lines, no AI-logic changes): launcher click adds `.open`; clicking `#timer-strip` (already `cursor:pointer`, `blocked-chat.css:40`) removes `.open`. No state persisted.
++4. **Regression tests**: new `tests/blocked/blocked.test.js` using `mountBlockedDom()`/`fireDomContentLoaded()` from `tests/helpers/dom-fixture.js` + `vi.useFakeTimers()`: (a) overlay hidden at load and `#btn-start` reachable; (b) clicking Start advances `#timer-digits` after a 1s tick; (c) pause/reset/skip behavior; (d) launcher opens and strip closes the overlay.
++5. **Fix pre-existing failure**: repair the mutation race in `queueSiteMutation` (`popup/popup.js:47-58`) and remove the debug `console.log` (`tests/popup/popup.test.js:224`) until the suite is 100% green.
++
++## Phase B — Flip clock (presentation-only over the verified engine)
++
++Files: `blocked/blocked.html`, `blocked/blocked.js`, `blocked/blocked.css`, new `lib/flip-clock.js`, new `lib/flip-clock.css`
++
++6. **Shared flip-clock module** `lib/flip-clock.js` (pure DOM, no chrome deps — matches existing `lib/` pattern): builds per-digit cards with top/bottom halves + colon separators; exposes `setTime("MM:SS")` that **diffs digits and only animates changed ones** (minute digits flip once per 60 ticks). `lib/flip-clock.css`: CSS-only `rotateX` flips, `backface-visibility:hidden`, **transform/opacity only** (no layout properties), fixed-size digit cells (no reflow), Orbitron font, `prefers-reduced-motion` fallback to instant text swap.
++7. **Wire into blocked page**: inside `.timer-display` (`blocked.html:53-56`) add the flip-clock markup; **keep `#timer-digits` in DOM as `aria-hidden` source of truth** — it backs `window.__focusguardTimer.getDisplay()` (`blocked.js:488-497`, consumed by `blocked-chat.js:137`) and the a11y path via `#timer-sr-status`. Extend `renderTime()` (`blocked.js:304-308`) to call `flipClock.setTime(formatTime(secs))` while keeping `timerDigits.textContent` writes exactly as today.
++8. **SVG ring**: hide via CSS (keep code, zero-risk) or remove `updateRing`/`RING_*` — implementer may choose; if kept hidden, leave a thin linear progress bar for phase progress. Preserve the `--phase-color` indirection (`blocked.css:16-17`) so body `phase-*` theming still works.
++9. **Timer strip** (`blocked-chat.js:92-145`): keep as plain text readout (already mirrors `getDisplay()`); delete nothing structural — it must keep live-updating while the overlay is open.
++
++## Phase C — Minimalist unified color scheme
++
++Files: new `shared/theme.css`, `blocked/blocked.css`, `popup/popup.css`, `blocked/blocked-chat.css`, `blocked/breathing.html`
++
++10. **Single token sheet** `shared/theme.css` (local `<link>`, buildless): near-black base (reuse `--bg-dark: #08080f`), off-white text (`--text-primary: #e8e8f0`), one neutral surface, keep the three phase colors (`--work-color/--short-break-color/--long-break-color`) as the **only** accent hues, reduced glow/shadow values, spacing/radius/typography scale. This replaces the two divergent palettes (`blocked.css:6-27` vs `popup.css:6-18`).
++11. **Re-theme surfaces**: point both `:root` blocks at shared tokens; neutralize decorative excess (lower blob/particle opacity to ~0 via CSS only — `createParticles()` JS can stay); re-map site avatar letter hues (`popup.js:255-266`) into the minimalist palette. Verify no remote assets added (`grep http` on touched files).
++
++## Phase D — Popup segmented into two tabs
++
++Files: `popup/popup.html`, `popup/popup.js`, `popup/popup.css`, `lib/timer.js`
++
++12. **Tab structure — preserve every existing element ID verbatim** (the 15 popup tests mount the real `popup.html` and assert by ID: `master-toggle-input`, `site-input`, `add-site-btn`, `input-hint`, `sites-list`, `site-count`, `empty-state`, 4 sliders, 4 value labels). Insert `<nav role="tablist">` after the header with `#tab-btn-sites` ("Blocklist") and `#tab-btn-timer` ("Timer"); wrap `add-site-section` + `sites-list-section` in `role="tabpanel" id="tab-panel-sites"` and `settings-section` in `role="tabpanel" id="tab-panel-timer"`. Header + master toggle stay outside the tabs (global controls).
++13. **Timer control in popup**: extract pure state-transition helpers (`start(state, now)`, `pause(state, now)`, `reset(settings)`, `skip(state, now)`) from the start/pause/skip math in `blocked.js:157-213` into `lib/timer.js` (keep functions pure, `now` as param — existing convention; existing 34 model tests must stay green). Popup Timer tab reads/writes `chrome.storage.local["focusguard_timer_state"]` (contract already defined at `blocked.js:15`, written by `saveState()` at `blocked.js:387-398`) **serialized through a mutation queue** (reuse the `queueSiteMutation` pattern); live updates via the `chrome.storage.onChanged` listener already present (`popup.js:119`). Render a compact flip-clock instance (same `lib/flip-clock.js`, scaled via CSS custom property), Start/Pause/Skip/Reset buttons, phase + session dots, and the existing settings sliders. Add "Open full-screen timer" button → `chrome.tabs.create({ url: chrome.runtime.getURL("blocked/blocked.html") })` (no new permission needed; page is already `web_accessible_resources`).
++14. **Blocked page consumes the same helpers**: refactor `blocked.js` callsites to use the extracted `lib/timer.js` transitions (behavior-identical; covered by existing + new tests).
++15. **Tab behavior**: toggle `hidden` + `aria-selected`; ArrowLeft/Right keyboard navigation; persist last tab in `localStorage`; guard all new JS behind element-existence checks so partial fixtures can't crash.
++16. **Responsive popup CSS**: fluid widths (Chrome controls popup width), `minmax` grid for site cards, ≥44px touch targets, container-width behavior for narrow popups; no fixed panel heights.
++
++## Phase E — UX polish & docs
++
++17. Consistent `:focus-visible` outlines and ARIA across popup + blocked page; Space toggles timer on blocked page (guarded against input focus).
++18. **Default-intervention clarity** (UX gap found in research: new sites default to `interventionMode:"strip"` at `popup.js:219` and never redirect to the timer page, `background.js:87-92`): keep the `strip` default (product design — do not silently change) but add an onboarding hint/empty-state note in the Blocklist tab explaining Strip vs Block modes and how the Pomodoro page is reached.
++19. Update `docs/QA-TEST-PLAN.md` with new flip-clock/tab scenarios; update `README.md` screenshots/UI description; bump `manifest.json` version; keep `docs/adr/` convention if any decision warrants an ADR.
++
++## Dependencies
++
++- A gates everything (page untestable behind overlay). Step 5 independent.
++- B depends on A (same files); step 6 gates 7; 9 after 7.
++- C depends on B (markup settled before retheme); step 10 gates 11.
++- D is mostly independent of B/C except shared tokens; **step 13's `lib/timer.js` extraction must land before both popup wiring (13) and blocked.js refactor (14)**.
++- E last. Recommended order: A → B → D → C → E (each phase independently shippable/testable).
++
++## Test Plan
++
++- Full suite green after each phase: `npx vitest run` (target 100% — including the currently failing popup race test fixed in A5) and `npx eslint .`.
++- New `tests/blocked/blocked.test.js` regression coverage (A4) — the bug went undetected precisely because `blocked.js` had zero tests.
++- New unit tests for the extracted `lib/timer.js` transitions and flip-clock digit diffing.
++- Manual/loaded-extension check: add a site in Block mode → navigate → timer starts, flips, pauses, survives popup↔page control handoff via storage.
++- Final **Browser E2E verification** of popup tabs + blocked page before delivery; **3 parallel CodeReview passes** (completeness / correctness / impact) before completion.
++
++## Risks & Mitigations
++
++| Risk | Mitigation |
++|---|---|
++| Popup tests break on ID changes | Preserve all existing IDs verbatim; wrap sections instead of replacing; guard new JS |
++| `getDisplay()` consumer breaks | Keep `timerDigits.textContent` writes unchanged; flip cards are additive siblings |
++| Popup + blocked page race on shared timer state | Serialized mutation queue on all writes; blocked page treats `storage.onChanged` as authority |
++| Flip animation jank | Transform/opacity-only CSS, fixed cell sizes, animate only changed digits, `prefers-reduced-motion` fallback |
++| Hiding Bao regresses the chat feature | Launcher button keeps Bao one click away; AI init code untouched |
++| Offline guarantee broken | All art pure CSS; fonts already self-hosted; grep for remote URLs in touched files |
++| Pre-existing failing test muddies verification | Fixed explicitly in A5; documented as pre-existing on clean HEAD |
++
++## Rejected Alternatives
++
++- **`chrome.alarms` background-owned timer + new `lib/timer-store.js` + heartbeat removal** (performance plan): robust for out-of-tab timing but adds an `alarms` manifest permission, service-worker phase-advance logic, and large `blocked.js` refactor — disproportionate risk for this iteration; deadline-based `endsAt` already keeps displayed time correct after tab close. Defer to a future hardening ticket.
++- **Read-only timer status card in popup** (minimal plan): safest, but the user explicitly asked for a tab "to start the pomodoro timers" — full controls are required.
++- **Deleting the panda overlay entirely**: regresses the Bao feature; hidden-by-default + launcher restores the timer while keeping Bao reachable.
++- **Changing the default intervention mode from `strip` to `block`**: silently changes product behavior for all new sites; instead, clarify via onboarding hint (E18).
+diff --git a/lib/flip-clock.css b/lib/flip-clock.css
+new file mode 100644
+index 0000000..d381b99
+--- /dev/null
++++ b/lib/flip-clock.css
+@@ -0,0 +1,149 @@
++/* ═══════════════════════════════════════════════════════
++   FocusGuard — Flip Clock Styles
++   Classic split-flap readout, minimalist execution: flat
++   dark cards, one hairline hinge, thin borders — no gloss,
++   no gradients. Animates transform/opacity ONLY, fixed-size
++   digit cells (zero reflow), self-hosted Orbitron.
++   Size scales off --flip-size so the popup can render a
++   compact variant later; accent hue comes from --phase-color
++   so body.phase-* theming keeps working.
++   ═══════════════════════════════════════════════════════ */
++
++.flip-clock {
++  /* Card height — the single knob for every derived size. */
++  --flip-size: 72px;
++  /* One half of a flip; keep in sync with FLIP_MS in flip-clock.js. */
++  --flip-ms: 300ms;
++  /* Surfaces come from the shared theme (fallbacks keep this sheet
++     usable standalone). */
++  --flip-card-bg: var(--surface, #12121a);
++  --flip-card-bg-top: var(--surface, #171721);
++  --flip-card-bg-bottom: var(--surface, #101018);
++  --flip-border: var(--hairline, rgba(255, 255, 255, 0.08));
++  --flip-accent: var(--phase-color, #2ed573);
++  --flip-digit-color: var(--text-primary, #e8e8f0);
++
++  display: flex;
++  align-items: center;
++  gap: calc(var(--flip-size) * 0.09);
++  font-family: 'Orbitron', monospace;
++  font-variant-numeric: tabular-nums;
++}
++
++/* ── Digit card (fixed size — nothing reflows) ─────────── */
++.flip-digit {
++  position: relative;
++  width: calc(var(--flip-size) * 0.68);
++  height: var(--flip-size);
++  border: 1px solid var(--flip-border);
++  border-radius: calc(var(--flip-size) * 0.09);
++  background: var(--flip-card-bg);
++  perspective: calc(var(--flip-size) * 5);
++}
++
++/* Hairline hinge accent in the phase color — the only ornament. */
++.flip-digit::after {
++  content: "";
++  position: absolute;
++  left: 0;
++  right: 0;
++  top: 50%;
++  height: 1px;
++  background: var(--flip-accent);
++  opacity: 0.28;
++  z-index: 3;
++  pointer-events: none;
++}
++
++/* ── Card halves ───────────────────────────────────────── */
++.flip-half {
++  position: absolute;
++  left: 0;
++  width: 100%;
++  height: 50%;
++  overflow: hidden;
++}
++
++.flip-top {
++  top: 0;
++  background: var(--flip-card-bg-top);
++  border-radius: calc(var(--flip-size) * 0.09) calc(var(--flip-size) * 0.09) 0 0;
++  border-bottom: 1px solid rgba(0, 0, 0, 0.55);
++}
++
++.flip-bottom {
++  bottom: 0;
++  background: var(--flip-card-bg-bottom);
++  border-radius: 0 0 calc(var(--flip-size) * 0.09) calc(var(--flip-size) * 0.09);
++}
++
++/* The glyph inside a half is a FULL-height digit; each half clips its
++   share. Top halves anchor it at the top edge, bottom halves pull it up
++   by half the card — static positioning only, no animated layout. */
++.flip-glyph {
++  position: absolute;
++  left: 0;
++  width: 100%;
++  height: var(--flip-size);
++  line-height: var(--flip-size);
++  text-align: center;
++  font-size: calc(var(--flip-size) * 0.56);
++  font-weight: 700;
++  color: var(--flip-digit-color);
++}
++
++.flip-top .flip-glyph,
++.flip-leaf-top .flip-glyph {
++  top: 0;
++}
++
++.flip-bottom .flip-glyph,
++.flip-leaf-bottom .flip-glyph {
++  top: calc(var(--flip-size) * -0.5);
++}
++
++/* ── Flip leaves (transient, CSS-animated) ─────────────── */
++.flip-leaf {
++  z-index: 2;
++  backface-visibility: hidden;
++  -webkit-backface-visibility: hidden;
++}
++
++.flip-leaf-top {
++  top: 0;
++  transform-origin: center bottom;
++  animation: flip-leaf-top var(--flip-ms) ease-in forwards;
++}
++
++.flip-leaf-bottom {
++  bottom: 0;
++  transform-origin: center top;
++  animation: flip-leaf-bottom var(--flip-ms) ease-out var(--flip-ms) forwards;
++}
++
++@keyframes flip-leaf-top {
++  from { transform: rotateX(0deg); }
++  to   { transform: rotateX(-90deg); }
++}
++
++@keyframes flip-leaf-bottom {
++  from { transform: rotateX(90deg); }
++  to   { transform: rotateX(0deg); }
++}
++
++/* ── Colon separator ───────────────────────────────────── */
++.flip-colon {
++  font-size: calc(var(--flip-size) * 0.44);
++  font-weight: 700;
++  line-height: var(--flip-size);
++  color: var(--flip-accent);
++  transform: translateY(calc(var(--flip-size) * -0.03));
++}
++
++/* ── Reduced motion: instant text swap, no animation ───── */
++@media (prefers-reduced-motion: reduce) {
++  .flip-leaf {
++    animation: none;
++    display: none;
++  }
++}
+diff --git a/lib/flip-clock.js b/lib/flip-clock.js
+new file mode 100644
+index 0000000..fc787c0
+--- /dev/null
++++ b/lib/flip-clock.js
+@@ -0,0 +1,191 @@
++/*  ═══════════════════════════════════════════════════════
++    FocusGuard — Flip Clock (shared view component)
++    Pure DOM module, no chrome.*, no internal timers other
++    than the flip-animation cleanup — matches the lib/
++    module pattern. Builds an MM:SS readout from four
++    per-digit flip cards plus a colon separator, and
++    setTime() diffs against the previously displayed value
++    so ONLY cards whose digit actually changed animate
++    (seconds-ones flips every tick; minute digits once per
++    60 ticks). All styling lives in lib/flip-clock.css.
++    ═══════════════════════════════════════════════════════ */
++
++// Duration of ONE half of the flip (top leaf folding down, or bottom leaf
++// unfolding). A full digit flip takes 2 x FLIP_MS. Keep in sync with
++// --flip-ms in lib/flip-clock.css — the CSS animates the leaves, this
++// timeout only removes them afterwards.
++const FLIP_MS = 300;
++
++function prefersReducedMotion() {
++  return !!(
++    typeof window !== "undefined" &&
++    window.matchMedia &&
++    window.matchMedia("(prefers-reduced-motion: reduce)").matches
++  );
++}
++
++/**
++ * Creates a flip clock inside `container`. The container gains the
++ * `flip-clock` class (sized via the `--flip-size` custom property) and is
++ * marked aria-hidden — callers own the accessible announcement channel.
++ *
++ * @param {HTMLElement} container element to mount into (emptied first)
++ * @returns {{ setTime(time: string): void, getTime(): string|null, destroy(): void }}
++ */
++export function createFlipClock(container) {
++  let current = null; // last displayed "MM:SS"
++  let destroyed = false;
++
++  // cards[i] = { root, top, bottom, timeout } where top/bottom are the
++  // static half glyphs; leaves are transient children of `root`.
++  const cards = [];
++
++  function makeGlyph(digit) {
++    const glyph = document.createElement("span");
++    glyph.className = "flip-glyph";
++    glyph.textContent = digit;
++    return glyph;
++  }
++
++  function makeHalf(className, digit) {
++    const half = document.createElement("div");
++    half.className = `flip-half ${className}`;
++    half.appendChild(makeGlyph(digit));
++    return half;
++  }
++
++  function buildDigitCard() {
++    const root = document.createElement("div");
++    root.className = "flip-digit";
++    root.appendChild(makeHalf("flip-top", "0"));
++    root.appendChild(makeHalf("flip-bottom", "0"));
++    container.appendChild(root);
++    return {
++      root,
++      top: root.querySelector(".flip-top .flip-glyph"),
++      bottom: root.querySelector(".flip-bottom .flip-glyph"),
++      timeout: null,
++    };
++  }
++
++  function buildColon() {
++    const colon = document.createElement("span");
++    colon.className = "flip-colon";
++    colon.textContent = ":";
++    container.appendChild(colon);
++  }
++
++  // ── Build: MM : SS ────────────────────────────────────
++  // Match the documented contract: the container is emptied FIRST, so a
++  // mount into a used element can't duplicate the cards.
++  container.innerHTML = "";
++  container.classList.add("flip-clock");
++  container.setAttribute("aria-hidden", "true");
++  cards.push(buildDigitCard(), buildDigitCard());
++  buildColon();
++  cards.push(buildDigitCard(), buildDigitCard());
++
++  // ── Helpers ───────────────────────────────────────────
++  // Accepts "MM:SS"; anything else clamps to "00:00" rather than throwing —
++  // a display component must never take the timer page down.
++  function normalize(value) {
++    return typeof value === "string" && /^\d{2}:\d{2}$/.test(value)
++      ? value
++      : "00:00";
++  }
++
++  function digitArrayOf(time) {
++    return [time[0], time[1], time[3], time[4]];
++  }
++
++  function setDigitInstant(card, digit) {
++    card.top.textContent = digit;
++    card.bottom.textContent = digit;
++  }
++
++  function clearLeaves(card) {
++    card.root.querySelectorAll(".flip-leaf").forEach((leaf) => leaf.remove());
++  }
++
++  function finalize(card) {
++    if (card.timeout != null) {
++      clearTimeout(card.timeout);
++      card.timeout = null;
++    }
++    clearLeaves(card);
++    card.root.classList.remove("is-flipping");
++  }
++
++  function appendLeaf(card, className, digit) {
++    const leaf = document.createElement("div");
++    leaf.className = `flip-half flip-leaf ${className}`;
++    leaf.appendChild(makeGlyph(digit));
++    card.root.appendChild(leaf);
++  }
++
++  // Classic two-leaf flip, CSS-only (rotateX on .flip-leaf-*):
++  //   1. static top half already shows NEW; a leaf with the OLD digit
++  //      folds down over it (0 → -90deg, origin bottom).
++  //   2. static bottom half still shows OLD; a leaf with the NEW digit
++  //      unfolds over it (90deg → 0, origin top), delayed by FLIP_MS.
++  //   3. after 2 x FLIP_MS the leaves are removed and the static bottom
++  //      half catches up to NEW.
++  function flipDigit(card, newDigit) {
++    finalize(card); // collapse any in-flight flip first
++    const oldDigit = card.top.textContent;
++
++    if (prefersReducedMotion()) {
++      // Instant text swap, no animation.
++      setDigitInstant(card, newDigit);
++      return;
++    }
++
++    card.root.classList.add("is-flipping");
++    card.top.textContent = newDigit; // revealed as the top leaf folds away
++    appendLeaf(card, "flip-leaf-top", oldDigit);
++    appendLeaf(card, "flip-leaf-bottom", newDigit);
++
++    card.timeout = setTimeout(() => {
++      card.timeout = null;
++      clearLeaves(card);
++      card.bottom.textContent = newDigit;
++      card.root.classList.remove("is-flipping");
++    }, FLIP_MS * 2);
++  }
++
++  // ── Public API ────────────────────────────────────────
++  function setTime(value) {
++    if (destroyed) return;
++    const next = normalize(value);
++    const digits = digitArrayOf(next);
++
++    // First paint — set every card, no animation.
++    if (current === null) {
++      digits.forEach((digit, i) => setDigitInstant(cards[i], digit));
++      current = next;
++      return;
++    }
++
++    if (next === current) return;
++
++    // Diff against the previous readout: only changed digits flip.
++    const prev = digitArrayOf(current);
++    digits.forEach((digit, i) => {
++      if (digit !== prev[i]) flipDigit(cards[i], digit);
++    });
++    current = next;
++  }
++
++  function getTime() {
++    return current;
++  }
++
++  function destroy() {
++    cards.forEach(finalize);
++    destroyed = true;
++    container.innerHTML = "";
++    container.classList.remove("flip-clock");
++  }
++
++  return { setTime, getTime, destroy };
++}
+diff --git a/lib/timer.js b/lib/timer.js
+index 4eb3b96..07918f9 100644
+--- a/lib/timer.js
++++ b/lib/timer.js
+@@ -90,6 +90,83 @@ export function advancePhase(state, settings, now) {
+   };
+ }
+ 
++// ── State transitions ───────────────────────────────────
++// Pure start/pause/reset/skip used by BOTH the blocked page and the
++// popup Timer tab, so the two surfaces can never disagree on the
++// transition math. All take `now` as a parameter (no internal clock).
++
++// Resume/start the current phase. No-op if already running. The deadline
++// is anchored to `now` plus whatever remains of the phase (falling back
++// to the full phase length when nothing is frozen).
++export function start(state, now) {
++  if (state.isRunning) return state;
++  const remaining = state.remaining != null ? state.remaining : state.totalTime;
++  return {
++    ...state,
++    isRunning: true,
++    endsAt: now + remaining * 1000,
++    remaining: null,
++  };
++}
++
++// Freeze the running phase: capture remaining time off the deadline and
++// drop it. Safe on an already-paused state (remaining stays frozen).
++export function pause(state, now) {
++  const remaining = remainingSeconds(state, now);
++  return { ...state, isRunning: false, endsAt: null, remaining };
++}
++
++// Fresh idle state at the start of round 1, built from `settings`.
++export function reset(settings) {
++  return initialState(settings);
++}
++
++// Jump to the next phase WITHOUT running (classic Skip behavior):
++// the skipped-to phase starts paused, waiting for the next Start.
++export function skip(state, settings, now) {
++  return advancePhase({ ...state, isRunning: false }, settings, now);
++}
++
++// ── Cross-surface restore contract ──────────────────────
++// Shared by BOTH the blocked page and the popup Timer tab (ADR-0002) so
++// the two surfaces can never drift on what counts as restorable or how a
++// persisted state is revived.
++
++// Discard persisted states older than this — a session abandoned for 2+
++// hours is not one the user wants to resume.
++export const STALE_MS = 2 * 60 * 60 * 1000;
++
++// True when a persisted state is young enough to restore. `now` is passed
++// in (no internal clock, matching the rest of this module).
++export function isStateFresh(stored, now) {
++  return !!stored && now - (stored.savedAt || 0) < STALE_MS;
++}
++
++// Normalize a persisted state for display: fill in any missing fields, and
++// — if the session was running but its deadline passed while no surface was
++// alive — advance exactly one phase (advancePhase() keeps it running with a
++// fresh `endsAt`, since it was running). Cascading through more than one
++// elapsed phase is intentionally not attempted.
++export function reviveState(restored, settings, now) {
++  let state = {
++    phase: restored.phase || "work",
++    currentRound: restored.currentRound || 1,
++    totalRounds: restored.totalRounds || settings.roundsBeforeLong,
++    totalTime: restored.totalTime || phaseDuration(restored.phase || "work", settings),
++    isRunning: !!restored.isRunning,
++    endsAt: restored.endsAt ?? null,
++    remaining: restored.remaining ?? null,
++  };
++
++  if (state.isRunning && state.endsAt != null && remainingSeconds(state, now) <= 0) {
++    state = advancePhase(state, settings, now);
++  } else if (!state.isRunning && state.remaining == null) {
++    state.remaining = state.totalTime;
++  }
++
++  return state;
++}
++
+ // ── Display formatting ──────────────────────────────────
+ // "MM:SS", clamps negatives (and non-finite input) to "00:00".
+ export function formatTime(seconds) {
+diff --git a/popup/popup.css b/popup/popup.css
+index 53ab1f3..42a9afb 100644
+--- a/popup/popup.css
++++ b/popup/popup.css
+@@ -1,29 +1,30 @@
+ /* ═══════════════════════════════════════════════════════
+    FocusGuard — Popup Styles
+-   Dark-themed, Unhook-inspired toggle UI
++   Shares the minimalist palette from shared/theme.css
++   (loaded first). This :root only bridges legacy component
++   names onto the shared tokens — no divergent hues.
+    ═══════════════════════════════════════════════════════ */
+ 
+ :root {
+-  --bg-primary: #0d0d1a;
+-  --bg-secondary: #141428;
+-  --bg-card: #1a1a35;
+-  --bg-card-hover: #22224a;
+-  --bg-input: #12122a;
+-  --text-primary: #e8e8f0;
+-  --text-secondary: #8888aa;
+-  --text-muted: #555570;
+-  --accent: #6c5ce7;
+-  --accent-light: #a29bfe;
+-  --accent-glow: rgba(108, 92, 231, 0.3);
++  /* Surfaces — one neutral elevated surface, flat */
++  --bg-primary: var(--bg-dark);
++  --bg-secondary: var(--surface);
++  --bg-card: var(--surface);
++  --bg-card-hover: var(--surface-hover);
++  --bg-input: var(--bg-dark);
++
++  /* Accent — the work-phase green is the popup's single hue;
++     --danger stays a semantic error color, not an accent. */
++  --accent: var(--work-color);
++  --accent-light: #6fe3a3;
++  --accent-glow: var(--work-glow);
+   --danger: #ff6b6b;
+   --danger-hover: #ff4757;
+-  --success: #2ed573;
+-  --border: rgba(255, 255, 255, 0.06);
+-  --border-accent: rgba(108, 92, 231, 0.3);
+-  --radius-sm: 8px;
+-  --radius-md: 12px;
+-  --radius-lg: 16px;
+-  --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
++  --success: var(--work-color);
++
++  /* Borders */
++  --border: var(--hairline);
++  --border-accent: var(--work-glow);
+ }
+ 
+ * {
+@@ -33,14 +34,21 @@
+ }
+ 
+ body {
+-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
++  font-family: var(--font-body);
+   background: var(--bg-primary);
+   color: var(--text-primary);
+   width: 360px;
++  max-width: 100%;
+   min-height: 200px;
+   overflow-x: hidden;
+ }
+ 
++/* The `hidden` attribute drives tab-panel visibility — make sure no
++   author rule can accidentally resurrect a hidden panel. */
++[hidden] {
++  display: none !important;
++}
++
+ /* ── Scrollbar ────────────────────── */
+ ::-webkit-scrollbar {
+   width: 5px;
+@@ -69,7 +77,7 @@ body {
+   align-items: center;
+   justify-content: space-between;
+   padding: 16px 18px;
+-  background: linear-gradient(135deg, var(--bg-secondary), var(--bg-primary));
++  background: var(--bg-primary);
+   border-bottom: 1px solid var(--border);
+   position: sticky;
+   top: 0;
+@@ -86,17 +94,13 @@ body {
+   width: 32px;
+   height: 32px;
+   border-radius: var(--radius-sm);
+-  filter: drop-shadow(0 0 8px var(--accent-glow));
+ }
+ 
+ .header-text h1 {
+   font-size: 16px;
+   font-weight: 700;
+   letter-spacing: -0.3px;
+-  background: linear-gradient(135deg, var(--text-primary), var(--accent-light));
+-  -webkit-background-clip: text;
+-  -webkit-text-fill-color: transparent;
+-  background-clip: text;
++  color: var(--text-primary);
+ }
+ 
+ .header-subtitle {
+@@ -182,8 +186,8 @@ body {
+   display: flex;
+   align-items: center;
+   justify-content: center;
+-  width: 40px;
+-  height: 40px;
++  width: 44px;
++  height: 44px;
+   background: var(--accent);
+   border: none;
+   border-radius: var(--radius-md);
+@@ -249,8 +253,9 @@ body {
+ .sites-list {
+   max-height: 200px;
+   overflow-y: auto;
+-  display: flex;
+-  flex-direction: column;
++  display: grid;
++  grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
++  align-items: start;
+   gap: 6px;
+ }
+ 
+@@ -274,6 +279,25 @@ body {
+   font-size: 11px;
+ }
+ 
++/* ── Onboarding hint (Strip vs Block) ─ */
++/* Static note under the sites list. Styled purely from shared tokens;
++   the phase green left edge is the only accent. */
++.mode-hint {
++  margin-top: 8px;
++  padding: 8px 10px;
++  border-left: 2px solid var(--accent);
++  background: var(--bg-card);
++  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
++  font-size: 11px;
++  line-height: 1.5;
++  color: var(--text-secondary);
++}
++
++.mode-hint strong {
++  color: var(--text-primary);
++  font-weight: 600;
++}
++
+ /* ── Site Card ────────────────────── */
+ .site-card {
+   display: flex;
+@@ -463,10 +487,10 @@ body {
+   flex-shrink: 0;
+ }
+ 
+-.setting-dot.work { background: #2ed573; }
+-.setting-dot.short-break { background: #3498ff; }
+-.setting-dot.long-break { background: #a29bfe; }
+-.setting-dot.rounds { background: #ffa502; }
++.setting-dot.work { background: var(--work-color); }
++.setting-dot.short-break { background: var(--short-break-color); }
++.setting-dot.long-break { background: var(--long-break-color); }
++.setting-dot.rounds { background: var(--text-secondary); }
+ 
+ .setting-value {
+   margin-left: auto;
+@@ -505,12 +529,188 @@ body {
+   box-shadow: 0 0 14px var(--accent-glow);
+ }
+ 
+-.work-slider::-webkit-slider-thumb { background: #2ed573; box-shadow: 0 0 8px rgba(46, 213, 115, 0.3); }
+-.short-break-slider::-webkit-slider-thumb { background: #3498ff; box-shadow: 0 0 8px rgba(52, 152, 255, 0.3); }
+-.long-break-slider::-webkit-slider-thumb { background: #a29bfe; box-shadow: 0 0 8px rgba(162, 155, 254, 0.3); }
+-.rounds-slider::-webkit-slider-thumb { background: #ffa502; box-shadow: 0 0 8px rgba(255, 165, 2, 0.3); }
++.work-slider::-webkit-slider-thumb { background: var(--work-color); box-shadow: 0 0 8px var(--work-glow); }
++.short-break-slider::-webkit-slider-thumb { background: var(--short-break-color); box-shadow: 0 0 8px var(--short-break-glow); }
++.long-break-slider::-webkit-slider-thumb { background: var(--long-break-color); box-shadow: 0 0 8px var(--long-break-glow); }
++.rounds-slider::-webkit-slider-thumb { background: var(--text-secondary); box-shadow: none; }
+ 
+ /* ── Footer ───────────────────────── */
++/* ── Tab Bar (Blocklist / Timer) ───── */
++.tab-bar {
++  display: grid;
++  grid-template-columns: 1fr 1fr;
++  gap: 4px;
++  padding: 6px 18px 0;
++  background: var(--bg-primary);
++  border-bottom: 1px solid var(--border);
++}
++
++.tab-btn {
++  min-height: 44px;
++  padding: 0 12px;
++  background: transparent;
++  border: none;
++  border-bottom: 2px solid transparent;
++  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
++  color: var(--text-secondary);
++  font-family: 'Inter', sans-serif;
++  font-size: 13px;
++  font-weight: 600;
++  letter-spacing: 0.3px;
++  cursor: pointer;
++  transition: color var(--transition), background var(--transition), border-color var(--transition);
++}
++
++.tab-btn:hover {
++  color: var(--text-primary);
++  background: rgba(255, 255, 255, 0.03);
++}
++
++.tab-btn[aria-selected="true"] {
++  color: var(--accent-light);
++  border-bottom-color: var(--accent);
++}
++
++/* ── Timer Tab ──────────────────── */
++.timer-readout {
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  gap: 8px;
++  padding: 16px 18px 6px;
++}
++
++.popup-flip-clock-wrap {
++  display: flex;
++  justify-content: center;
++}
++
++/* Compact variant of the shared flip clock — `--flip-size` is the
++   single sizing knob (see lib/flip-clock.css); the ID selector wins
++   over the component's own declaration. */
++#popup-flip-clock.flip-clock {
++  --flip-size: 34px;
++}
++
++/* Hidden mirror of the flip readout — source of truth for tests and
++   future accessible channels; the flip cards own the visual display. */
++.popup-timer-digits {
++  position: absolute;
++  width: 1px;
++  height: 1px;
++  overflow: hidden;
++  clip: rect(0 0 0 0);
++  white-space: nowrap;
++}
++
++.popup-phase-row {
++  display: flex;
++  align-items: baseline;
++  gap: 10px;
++}
++
++.popup-phase-label {
++  font-size: 11px;
++  font-weight: 700;
++  letter-spacing: 1.2px;
++  color: var(--accent-light);
++}
++
++.popup-session-label {
++  font-size: 11px;
++  color: var(--text-secondary);
++}
++
++.popup-session-dots {
++  display: flex;
++  gap: 6px;
++  min-height: 8px;
++}
++
++.popup-dot {
++  width: 7px;
++  height: 7px;
++  border-radius: 50%;
++  background: var(--text-muted);
++  opacity: 0.5;
++}
++
++.popup-dot.completed {
++  background: var(--success);
++  opacity: 1;
++}
++
++.popup-dot.active {
++  background: var(--accent);
++  opacity: 1;
++  box-shadow: 0 0 6px var(--accent-glow);
++}
++
++.timer-controls {
++  display: grid;
++  grid-template-columns: repeat(4, minmax(0, 1fr));
++  gap: 8px;
++  padding: 10px 18px;
++}
++
++.timer-btn {
++  min-height: 44px;
++  padding: 0 6px;
++  background: var(--bg-card);
++  border: 1px solid var(--border);
++  border-radius: var(--radius-md);
++  color: var(--text-primary);
++  font-family: 'Inter', sans-serif;
++  font-size: 12px;
++  font-weight: 600;
++  cursor: pointer;
++  transition: background var(--transition), border-color var(--transition), transform var(--transition);
++}
++
++.timer-btn:hover {
++  background: var(--bg-card-hover);
++  border-color: var(--border-accent);
++}
++
++.timer-btn:active {
++  transform: scale(0.96);
++}
++
++.timer-btn-primary {
++  background: var(--accent);
++  border-color: transparent;
++  color: white;
++}
++
++.timer-btn-primary:hover {
++  background: var(--accent-light);
++}
++
++.open-full-timer {
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  gap: 6px;
++  width: calc(100% - 36px);
++  min-height: 44px;
++  margin: 0 18px 6px;
++  background: transparent;
++  border: 1px dashed var(--border-accent);
++  border-radius: var(--radius-md);
++  color: var(--text-secondary);
++  font-family: 'Inter', sans-serif;
++  font-size: 12px;
++  font-weight: 500;
++  cursor: pointer;
++  transition: color var(--transition), border-color var(--transition), background var(--transition);
++}
++
++.open-full-timer:hover {
++  color: var(--accent-light);
++  border-color: var(--accent);
++  background: rgba(46, 213, 115, 0.06);
++}
++
+ .popup-footer {
+   padding: 10px 18px;
+   border-top: 1px solid var(--border);
+@@ -520,14 +720,23 @@ body {
+ }
+ 
+ /* ── Focus Visibility ─────────────── */
++/* Every interactive element: 2px outline, 2px offset, shared token
++   (--focus-color, see shared/theme.css). Consistent with blocked.css
++   and blocked-chat.css. */
+ .btn-add:focus-visible,
+ .btn-delete:focus-visible,
+ .settings-toggle:focus-visible,
++.tab-btn:focus-visible,
++.timer-btn:focus-visible,
++.open-full-timer:focus-visible,
+ #site-input:focus-visible,
+ .slider:focus-visible,
++.mode-button:focus-visible,
++.friction-level-select:focus-visible,
++.element-toggle input:focus-visible,
+ .master-toggle input:focus-visible + .toggle-slider,
+ .site-toggle input:focus-visible + .toggle-slider {
+-  outline: 2px solid var(--accent-light);
++  outline: 2px solid var(--focus-color);
+   outline-offset: 2px;
+ }
+ 
+@@ -548,6 +757,9 @@ body {
+   .settings-panel,
+   .settings-toggle .chevron,
+   .btn-add,
++  .tab-btn,
++  .timer-btn,
++  .open-full-timer,
+   .slider::-webkit-slider-thumb {
+     transition: none !important;
+   }
+diff --git a/popup/popup.html b/popup/popup.html
+index 6cbb610..750992e 100644
+--- a/popup/popup.html
++++ b/popup/popup.html
+@@ -5,6 +5,8 @@
+   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+   <title>FocusGuard</title>
+   <link rel="stylesheet" href="../fonts/fonts.css">
++  <link rel="stylesheet" href="../shared/theme.css">
++  <link rel="stylesheet" href="../lib/flip-clock.css">
+   <link rel="stylesheet" href="popup.css">
+ </head>
+ <body>
+@@ -25,6 +27,19 @@
+       </label>
+     </header>
+ 
++    <!-- Tab bar — Blocklist / Timer -->
++    <nav class="tab-bar" role="tablist" aria-label="FocusGuard sections">
++      <button type="button" role="tab" id="tab-btn-sites" class="tab-btn" aria-selected="true" aria-controls="tab-panel-sites">
++        Blocklist
++      </button>
++      <button type="button" role="tab" id="tab-btn-timer" class="tab-btn" aria-selected="false" aria-controls="tab-panel-timer" tabindex="-1">
++        Timer
++      </button>
++    </nav>
++
++    <!-- Blocklist tab panel -->
++    <div role="tabpanel" id="tab-panel-sites" aria-labelledby="tab-btn-sites">
++
+     <!-- Add Website Section -->
+     <section class="add-site-section">
+       <div class="input-group">
+@@ -60,8 +75,51 @@
+           <span>Add a website above to start focusing</span>
+         </div>
+       </div>
++      <!-- Onboarding hint (E18): separate sibling of #empty-state so the
++           empty-state assertions stay untouched. Static — explains the
++           strip default and how the Pomodoro redirect is reached. -->
++      <p class="mode-hint" id="mode-hint">
++        Sites start in <strong>Strip</strong> mode (elements removed in-page).
++        Switch a site to <strong>Block</strong> mode to get the full-screen
++        Pomodoro redirect.
++      </p>
+     </section>
+ 
++    </div>
++
++    <!-- Timer tab panel -->
++    <div role="tabpanel" id="tab-panel-timer" aria-labelledby="tab-btn-timer" hidden>
++
++      <!-- Compact timer readout -->
++      <div class="timer-readout">
++        <div class="popup-flip-clock-wrap">
++          <div id="popup-flip-clock" aria-hidden="true"></div>
++        </div>
++        <span class="popup-timer-digits" id="popup-timer-digits">25:00</span>
++        <div class="popup-phase-row">
++          <span class="popup-phase-label" id="popup-phase-label" aria-live="polite">WORK</span>
++          <span class="popup-session-label" id="popup-session-label">Session 1 of 4</span>
++        </div>
++        <div class="popup-session-dots" id="popup-session-dots" aria-hidden="true"></div>
++      </div>
++
++      <!-- Timer controls -->
++      <div class="timer-controls">
++        <button type="button" class="timer-btn timer-btn-primary" id="timer-start-btn">Start</button>
++        <button type="button" class="timer-btn" id="timer-pause-btn">Pause</button>
++        <button type="button" class="timer-btn" id="timer-skip-btn">Skip</button>
++        <button type="button" class="timer-btn" id="timer-reset-btn">Reset</button>
++      </div>
++
++      <button type="button" class="open-full-timer" id="open-full-timer-btn">
++        Open full-screen timer
++        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
++          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
++          <polyline points="15 3 21 3 21 9"></polyline>
++          <line x1="10" y1="14" x2="21" y2="3"></line>
++        </svg>
++      </button>
++
+     <!-- Pomodoro Settings -->
+     <section class="settings-section">
+       <button class="settings-toggle" id="settings-toggle" aria-expanded="false" aria-controls="settings-panel">
+@@ -114,9 +172,11 @@
+       </div>
+     </section>
+ 
++    </div>
++
+     <!-- Footer -->
+     <footer class="popup-footer">
+-      <span>FocusGuard v1.0</span>
++      <span>FocusGuard v1.1.0</span>
+     </footer>
+   </div>
+ 
+diff --git a/popup/popup.js b/popup/popup.js
+index 2d48893..08c0f84 100644
+--- a/popup/popup.js
++++ b/popup/popup.js
+@@ -6,6 +6,17 @@
+ import { normalizeDomain, isValidDomain } from "../lib/domain.js";
+ import { getAvailableElements } from "../lib/stripping-rules.js";
+ import { getFrictionConfig } from "../lib/friction-rules.js";
++import {
++  start,
++  pause,
++  reset,
++  skip,
++  remainingSeconds,
++  formatTime,
++  isStateFresh,
++  reviveState,
++} from "../lib/timer.js";
++import { createFlipClock } from "../lib/flip-clock.js";
+ 
+ document.addEventListener("DOMContentLoaded", init);
+ 
+@@ -29,6 +40,24 @@ const shortBreakValue = document.getElementById("short-break-value");
+ const longBreakValue = document.getElementById("long-break-value");
+ const roundsValue = document.getElementById("rounds-value");
+ 
++// ── Tabs (Blocklist / Timer) ────────────────────────────
++const tabBtnSites = document.getElementById("tab-btn-sites");
++const tabBtnTimer = document.getElementById("tab-btn-timer");
++const tabPanelSites = document.getElementById("tab-panel-sites");
++const tabPanelTimer = document.getElementById("tab-panel-timer");
++
++// ── Timer Tab DOM ───────────────────────────────────────
++const popupFlipClockMount = document.getElementById("popup-flip-clock");
++const popupTimerDigits = document.getElementById("popup-timer-digits");
++const popupPhaseLabel = document.getElementById("popup-phase-label");
++const popupSessionLabel = document.getElementById("popup-session-label");
++const popupSessionDots = document.getElementById("popup-session-dots");
++const timerStartBtn = document.getElementById("timer-start-btn");
++const timerPauseBtn = document.getElementById("timer-pause-btn");
++const timerSkipBtn = document.getElementById("timer-skip-btn");
++const timerResetBtn = document.getElementById("timer-reset-btn");
++const openFullTimerBtn = document.getElementById("open-full-timer-btn");
++
+ // Guard so our own writes don't trigger a redundant re-render via
+ // chrome.storage.onChanged (see "Storage Sync" section below).
+ let suppressNextSitesChange = false;
+@@ -57,6 +86,43 @@ function queueSiteMutation(fn) {
+   return run;
+ }
+ 
++// ── Timer State Mutation Queue ──────────────────────────
++// The popup and the blocked page share one timer state in
++// chrome.storage.local["focusguard_timer_state"]. Every popup write goes
++// through this queue (same read-modify-write race as the sites array:
++// two rapid Start/Skip clicks must not clobber each other) and mirrors
++// the queueSiteMutation pattern above.
++const TIMER_STATE_KEY = "focusguard_timer_state";
++let timerMutationQueue = Promise.resolve();
++function queueTimerMutation(fn) {
++  const run = timerMutationQueue.then(fn, fn);
++  timerMutationQueue = run.then(
++    () => undefined,
++    () => undefined
++  );
++  return run;
++}
++
++// Value-based self-write suppression for the local timer-state area:
++// the `savedAt` of the last state THIS popup persisted. An onChanged event
++// carrying that exact value is our own write echoing back — skip re-render
++// only for it, so an external write (e.g. a blocked-page heartbeat)
++// landing between flag-set and our own write is never swallowed.
++let lastWrittenTimerSavedAt = null;
++
++// In-memory view of the shared timer state + flip clock instance.
++let popupTimerState = null;
++let popupFlipClock = null;
++let popupTickerHandle = null;
++// False until ANY state has been persisted (by the popup or the blocked
++// page). While false, the Timer tab renders idle defaults derived from
++// the settings sliders (reset(settings)), and slider changes keep
++// updating that display.
++let hasStoredTimerState = false;
++
++const PHASE_LABELS = { work: "WORK", shortBreak: "BREAK", longBreak: "LONG BREAK" };
++const TAB_STORAGE_KEY = "focusguard_active_tab";
++
+ // ── Init ────────────────────────────────────────────────
+ async function init() {
+   const data = await chrome.storage.sync.get(null);
+@@ -84,6 +150,11 @@ async function init() {
+   // Render sites
+   renderSites(data.sites || []);
+ 
++  // Tabs + Timer tab (both guarded on element existence so partial
++  // fixtures can't crash).
++  initTabs();
++  initTimerTab();
++
+   // Event listeners
+   addSiteBtn.addEventListener("click", () => queueSiteMutation(addSite));
+   siteInput.addEventListener("keydown", (e) => {
+@@ -103,10 +174,12 @@ async function init() {
+   [workSlider, shortBreakSlider, longBreakSlider, roundsSlider].forEach((slider) => {
+     slider.addEventListener("input", () => {
+       updateSliderLabels();
++      refreshIdleTimerDefaults();
+       savePomodoroSettingsDebounced();
+     });
+     slider.addEventListener("change", () => {
+       updateSliderLabels();
++      refreshIdleTimerDefaults();
+       savePomodoroSettingsDebounced.cancel();
+       savePomodoroSettings();
+     });
+@@ -117,6 +190,12 @@ async function init() {
+   // another popup instance). Our own writes are flagged so we don't
+   // immediately re-render on top of our own optimistic UI update.
+   chrome.storage.onChanged.addListener((changes, areaName) => {
++    // Local area carries the shared timer state (written by the blocked
++    // page and by this popup's Timer tab).
++    if (areaName === "local") {
++      handleTimerStateChange(changes);
++      return;
++    }
+     if (areaName !== "sync") return;
+ 
+     if (changes.sites) {
+@@ -139,9 +218,264 @@ async function init() {
+         longBreakSlider.value = next.longBreak;
+         roundsSlider.value = next.roundsBeforeLong;
+         updateSliderLabels();
++        refreshIdleTimerDefaults();
++      }
++    }
++  });
++}
++
++// ── Tabs ──────────────────────────────────────────────
++// Two tabs: Blocklist (sites) and Timer. Header + master toggle stay
++// outside the tabs. The last active tab is persisted in localStorage.
++function initTabs() {
++  if (!tabBtnSites || !tabBtnTimer || !tabPanelSites || !tabPanelTimer) return;
++
++  const tabs = [tabBtnSites, tabBtnTimer];
++  const panelOf = { [tabBtnSites.id]: tabPanelSites, [tabBtnTimer.id]: tabPanelTimer };
++
++  function activateTab(tab, persist = true) {
++    tabs.forEach((t) => {
++      const selected = t === tab;
++      t.setAttribute("aria-selected", String(selected));
++      t.tabIndex = selected ? 0 : -1;
++      const panel = panelOf[t.id];
++      if (panel) panel.hidden = !selected;
++    });
++    if (persist) {
++      try {
++        window.localStorage.setItem(TAB_STORAGE_KEY, tab.id);
++      } catch {
++        // Storage unavailable (private mode etc.) — tabs still work.
++      }
++    }
++  }
++
++  tabs.forEach((tab, index) => {
++    tab.addEventListener("click", () => activateTab(tab));
++    tab.addEventListener("keydown", (e) => {
++      let target = null;
++      if (e.key === "ArrowRight") {
++        target = tabs[(index + 1) % tabs.length];
++      } else if (e.key === "ArrowLeft") {
++        target = tabs[(index - 1 + tabs.length) % tabs.length];
++      } else if (e.key === "Home") {
++        target = tabs[0];
++      } else if (e.key === "End") {
++        target = tabs[tabs.length - 1];
++      }
++      if (!target) return;
++      e.preventDefault();
++      activateTab(target);
++      target.focus();
++    });
++  });
++
++  // Restore the last active tab; default is Blocklist.
++  let savedTab = null;
++  try {
++    savedTab = window.localStorage.getItem(TAB_STORAGE_KEY);
++  } catch {
++    // Ignore — fall through to the default.
++  }
++  const restored = tabs.find((t) => t.id === savedTab) || tabBtnSites;
++  activateTab(restored, false);
++}
++
++// ── Timer Tab ─────────────────────────────────────────
++// Reads/writes the SAME storage key/shape the blocked page uses
++// (blocked.js saveState(): { ...timerState, savedAt }). All writes are
++// serialized through queueTimerMutation; external changes arrive via the
++// chrome.storage.onChanged listener registered in init().
++async function initTimerTab() {
++  if (!popupFlipClockMount || !timerStartBtn) return;
++
++  popupFlipClock = createFlipClock(popupFlipClockMount);
++
++  // Restore whatever the blocked page (or a previous popup) persisted.
++  try {
++    const data = await chrome.storage.local.get([TIMER_STATE_KEY]);
++    const stored = data[TIMER_STATE_KEY];
++    // 2h staleness gate (shared STALE_MS via isStateFresh, same as the
++    // blocked page) — never surface, and never re-persist, a stale session.
++    if (isStateFresh(stored, Date.now())) {
++      // Adoption race: a concurrent onChanged event may already have
++      // applied a FRESHER state while this storage.get was in flight —
++      // only adopt if nothing newer is already in memory.
++      if (!popupTimerState || (stored.savedAt ?? 0) >= (popupTimerState.savedAt ?? 0)) {
++        // reviveState also advances one phase if the running deadline
++        // already passed while the popup was closed (mirrors blocked.js).
++        popupTimerState = reviveState(stored, currentSettingsFromSliders(), Date.now());
++        hasStoredTimerState = true;
+       }
+     }
++  } catch {
++    // Not in extension context.
++  }
++
++  // Edge case — nothing persisted yet: idle defaults from the sliders.
++  if (!popupTimerState) {
++    popupTimerState = reset(currentSettingsFromSliders());
++  }
++  renderTimerState();
++
++  timerStartBtn.addEventListener("click", () =>
++    queueTimerMutation(() => applyTimerTransition((s) => start(s, Date.now())))
++  );
++  timerPauseBtn?.addEventListener("click", () =>
++    queueTimerMutation(() => applyTimerTransition((s) => pause(s, Date.now())))
++  );
++  timerSkipBtn?.addEventListener("click", () =>
++    queueTimerMutation(() =>
++      applyTimerTransition((s) => skip(s, currentSettingsFromSliders(), Date.now()))
++    )
++  );
++  timerResetBtn?.addEventListener("click", () =>
++    queueTimerMutation(() => applyTimerTransition(() => reset(currentSettingsFromSliders())))
++  );
++  openFullTimerBtn?.addEventListener("click", () => {
++    chrome.tabs.create({ url: chrome.runtime.getURL("blocked/blocked.html") });
+   });
++
++  // Popup closing — stop the local repaint ticker.
++  window.addEventListener("pagehide", disarmPopupTicker);
++}
++
++// Settings as currently shown on the sliders (the popup's source of
++// truth for durations — mirrors savePomodoroSettings).
++function currentSettingsFromSliders() {
++  return {
++    workDuration: parseInt(workSlider?.value ?? 25, 10),
++    shortBreak: parseInt(shortBreakSlider?.value ?? 5, 10),
++    longBreak: parseInt(longBreakSlider?.value ?? 15, 10),
++    roundsBeforeLong: parseInt(roundsSlider?.value ?? 4, 10),
++  };
++}
++
++// Apply a pure lib/timer.js transition to the freshest known state and
++// persist the result. Reads storage first so a blocked-page write that
++// landed after the popup opened is never clobbered by a stale copy.
++async function applyTimerTransition(transition) {
++  let source = popupTimerState;
++  try {
++    const data = await chrome.storage.local.get([TIMER_STATE_KEY]);
++    if (data[TIMER_STATE_KEY]) source = data[TIMER_STATE_KEY];
++  } catch {
++    // Fall back to the in-memory state.
++  }
++  if (!source) source = reset(currentSettingsFromSliders());
++
++  const next = transition(source);
++
++  const savedAt = Date.now();
++  lastWrittenTimerSavedAt = savedAt; // suppress this write's onChanged echo
++  try {
++    await chrome.storage.local.set({
++      [TIMER_STATE_KEY]: { ...next, savedAt },
++    });
++  } catch {
++    return;
++  }
++  popupTimerState = next;
++  hasStoredTimerState = true;
++  renderTimerState();
++}
++
++// chrome.storage.onChanged (local area) handler — re-render when the
++// blocked page (or another popup) changes the shared timer state.
++function handleTimerStateChange(changes) {
++  const change = changes[TIMER_STATE_KEY];
++  if (!change || !change.newValue) return;
++  const incoming = change.newValue;
++  // Our own applyTimerTransition() write echoing back — identifiable by
++  // the exact `savedAt` we wrote (see lastWrittenTimerSavedAt).
++  if (incoming.savedAt != null && incoming.savedAt === lastWrittenTimerSavedAt) return;
++  popupTimerState = incoming;
++  hasStoredTimerState = true;
++  renderTimerState();
++}
++
++// While nothing has been persisted yet, the Timer tab mirrors the
++// sliders — recompute the idle display when settings move.
++function refreshIdleTimerDefaults() {
++  if (hasStoredTimerState || !popupTimerState || popupTimerState.isRunning) return;
++  popupTimerState = reset(currentSettingsFromSliders());
++  renderTimerState();
++}
++
++// ── Timer Tab Rendering ───────────────────────────────
++function renderTimerState() {
++  if (!popupTimerState) return;
++
++  paintTimerReadout();
++
++  if (popupPhaseLabel) {
++    popupPhaseLabel.textContent = PHASE_LABELS[popupTimerState.phase] || PHASE_LABELS.work;
++  }
++  if (popupSessionLabel) {
++    popupSessionLabel.textContent = `Session ${popupTimerState.currentRound} of ${popupTimerState.totalRounds}`;
++  }
++  renderPopupSessionDots();
++
++  if (popupTimerState.isRunning) {
++    armPopupTicker();
++  } else {
++    disarmPopupTicker();
++  }
++}
++
++// Deadline-based repaint — recomputes remaining from endsAt every call,
++// so the 1s ticker is only a repaint trigger, never the clock itself.
++function paintTimerReadout() {
++  const display = formatTime(remainingSeconds(popupTimerState, Date.now()));
++  if (popupFlipClock) popupFlipClock.setTime(display);
++  if (popupTimerDigits) popupTimerDigits.textContent = display;
++}
++
++function renderPopupSessionDots() {
++  if (!popupSessionDots) return;
++  popupSessionDots.innerHTML = "";
++  for (let i = 1; i <= popupTimerState.totalRounds; i++) {
++    const dot = document.createElement("span");
++    dot.className = "popup-dot";
++    if (i < popupTimerState.currentRound) {
++      dot.classList.add("completed");
++    } else if (i === popupTimerState.currentRound) {
++      dot.classList.add("active");
++    }
++    popupSessionDots.appendChild(dot);
++  }
++}
++
++// ── Popup Ticker (repaint only, while running) ──────────
++function armPopupTicker() {
++  disarmPopupTicker();
++  popupTickerHandle = setInterval(() => {
++    if (!popupTimerState || !popupTimerState.isRunning) {
++      disarmPopupTicker();
++      return;
++    }
++    const now = Date.now();
++    if (remainingSeconds(popupTimerState, now) <= 0) {
++      // Deadline passed while the popup is open (or a restored state's
++      // endsAt was already past): run the same completion transition the
++      // blocked page uses — skip into the next phase, paused — queued so
++      // it can't race a concurrent control click. renderTimerState() from
++      // the applied transition disarms/re-arms the ticker as appropriate.
++      disarmPopupTicker();
++      queueTimerMutation(() =>
++        applyTimerTransition((s) => skip(s, currentSettingsFromSliders(), now))
++      );
++      return;
++    }
++    paintTimerReadout();
++  }, 1000);
++}
++
++function disarmPopupTicker() {
++  if (popupTickerHandle != null) {
++    clearInterval(popupTickerHandle);
++    popupTickerHandle = null;
++  }
+ }
+ 
+ // ── Debounce Helper ─────────────────────────────────────
+@@ -252,14 +586,19 @@ function hashString(str) {
+   return Math.abs(hash);
+ }
+ 
++const AVATAR_HUES = [140, 213, 245];
++
+ function buildAvatar(domain) {
+   const avatar = document.createElement("div");
+   avatar.className = "site-favicon";
+   avatar.setAttribute("aria-hidden", "true");
+ 
+-  const hue = hashString(domain) % 360;
+-  avatar.style.background = `hsl(${hue}, 55%, 32%)`;
+-  avatar.style.color = `hsl(${hue}, 85%, 88%)`;
++  // Phase C — minimalist scheme: only the three muted phase hues
++  // (work green / short-break blue / long-break violet), still
++  // deterministic per domain.
++  const hue = AVATAR_HUES[hashString(domain) % AVATAR_HUES.length];
++  avatar.style.background = `hsl(${hue}, 30%, 20%)`;
++  avatar.style.color = `hsl(${hue}, 45%, 78%)`;
+   avatar.textContent = (domain[0] || "?").toUpperCase();
+ 
+   return avatar;
+@@ -357,9 +696,14 @@ function buildSiteCard(site) {
+       frictionSelect.appendChild(option);
+     });
+ 
+-    frictionSelect.addEventListener("change", () =>
+-      queueSiteMutation(() => setFrictionLevel(site.domain, parseInt(frictionSelect.value)))
+-    );
++    frictionSelect.addEventListener("change", () => {
++      // Capture the chosen value at event time: the queued mutation must
++      // apply exactly the user action that enqueued it, never whatever the
++      // (possibly re-rendered or replaced) control shows by the time the
++      // mutation actually runs.
++      const level = parseInt(frictionSelect.value);
++      queueSiteMutation(() => setFrictionLevel(site.domain, level));
++    });
+ 
+     card.appendChild(frictionSelect);
+   }
+@@ -391,19 +735,26 @@ function buildSiteCard(site) {
+       label.appendChild(elementLabel);
+       elementToggles.appendChild(label);
+ 
+-      checkbox.addEventListener("change", () =>
+-        queueSiteMutation(() => toggleElement(site.domain, elementName, checkbox.checked))
+-      );
++      checkbox.addEventListener("change", () => {
++        const enabled = checkbox.checked; // eager capture — see frictionSelect above
++        queueSiteMutation(() => toggleElement(site.domain, elementName, enabled));
++      });
+     });
+ 
+     card.appendChild(elementToggles);
+   }
+ 
+   // Toggle handler — keyed by domain, not index (see toggleSite), and
+-  // queued (see queueSiteMutation) so two rapid toggles can't race.
+-  toggle.addEventListener("change", () =>
+-    queueSiteMutation(() => toggleSite(site.domain, toggle.checked))
+-  );
++  // queued (see queueSiteMutation) so two rapid toggles can't race. The
++  // checkbox state is captured at event time, not when the queued mutation
++  // eventually runs: reading `toggle.checked` lazily inside the queue means
++  // a second, different toggle action landing before execution could flip
++  // what the first queued mutation writes — each queued mutation must apply
++  // exactly the user action that enqueued it.
++  toggle.addEventListener("change", () => {
++    const active = toggle.checked;
++    queueSiteMutation(() => toggleSite(site.domain, active));
++  });
+ 
+   // Intervention mode handler — cycles between strip and block
+   modeButton.addEventListener("click", () =>
+diff --git a/shared/theme.css b/shared/theme.css
+new file mode 100644
+index 0000000..730c40a
+--- /dev/null
++++ b/shared/theme.css
+@@ -0,0 +1,73 @@
++/* ═══════════════════════════════════════════════════════
++   FocusGuard — Shared Theme Tokens
++   ONE token sheet for every surface (blocked page, popup,
++   chat overlay, flip clock, breathing page). Minimalist
++   direction: near-black base, one neutral elevated surface,
++   flat planes, hairline borders, no glow bloom. The three
++   phase colors are the ONLY accent hues in the system.
++   Load this BEFORE any page-specific stylesheet.
++   ═══════════════════════════════════════════════════════ */
++
++:root {
++  /* ── Phase accents (the only hues) ────────────────── */
++  --work-color: #2ed573;
++  --short-break-color: #3498ff;
++  --long-break-color: #a29bfe;
++
++  /* Glow variants exist only as low-alpha shadows — the old
++     bloom (0.25+) is gone; surfaces stay flat. */
++  --work-glow: rgba(46, 213, 115, 0.12);
++  --short-break-glow: rgba(52, 152, 255, 0.12);
++  --long-break-glow: rgba(162, 155, 254, 0.12);
++
++  /* Current phase — indirected so `body.phase-work`,
++     `body.phase-short-break`, `body.phase-long-break` on the
++     blocked page can switch every consumer at once. */
++  --phase-color: var(--work-color);
++  --phase-glow: var(--work-glow);
++
++  /* ── Neutral surfaces ─────────────────────────────── */
++  --bg-dark: #08080f;        /* near-black base */
++  --surface: #12121a;        /* the single elevated surface */
++  --surface-hover: #181822;  /* interactive state of --surface */
++  --bg-card: rgba(255, 255, 255, 0.04); /* flat veil over base */
++
++  /* ── Text ─────────────────────────────────────────── */
++  --text-primary: #e8e8f0;
++  --text-secondary: #8888aa;
++  --text-muted: #555570;
++
++  /* ── Hairline borders (1px, low-alpha white) ──────── */
++  --hairline: rgba(255, 255, 255, 0.08);
++  --hairline-faint: rgba(255, 255, 255, 0.05);
++
++  /* ── Spacing scale ────────────────────────────────── */
++  --space-1: 4px;
++  --space-2: 8px;
++  --space-3: 12px;
++  --space-4: 16px;
++  --space-5: 24px;
++  --space-6: 32px;
++
++  /* ── Radii ────────────────────────────────────────── */
++  --radius-sm: 8px;
++  --radius-md: 12px;
++  --radius-lg: 16px;
++  --radius-pill: 100px;
++
++  /* ── Typography ───────────────────────────────────── */
++  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
++  --font-display: 'Orbitron', monospace;
++  --text-xs: 11px;
++  --text-sm: 13px;
++  --text-md: 14px;
++
++  /* ── Motion ───────────────────────────────────────── */
++  --transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
++
++  /* ── Focus ────────────────────────────────────────── */
++  /* Single keyboard-focus color for every surface: the current
++     phase accent (work green in the popup). Used with a 2px
++     outline at 2px offset — see :focus-visible rules. */
++  --focus-color: var(--phase-color);
++}
+diff --git a/tests/blocked/blocked.test.js b/tests/blocked/blocked.test.js
+new file mode 100644
+index 0000000..cc4b93c
+--- /dev/null
++++ b/tests/blocked/blocked.test.js
+@@ -0,0 +1,415 @@
++/**
++ * blocked.test.js — regression tests for the blocked (Pomodoro) page.
++ *
++ * These exist because of a specific bug: the Bao panda chat overlay was
++ * rendered full-viewport on top of the timer with no close mechanism, so
++ * #btn-start / #btn-reset / #btn-skip were unreachable (the overlay
++ * swallowed every pointer event). The fix hides the overlay by default,
++ * adds a #chat-launcher button to open it, and makes #timer-strip close
++ * it. Test (1) below pins that contract; tests (2)-(4) prove the timer
++ * controls actually work end to end, and (5) covers the open/close path.
++ *
++ * Mounts the real blocked/blocked.html via the shared dom-fixture and
++ * dynamically imports blocked.js + blocked-chat.js (both wire themselves
++ * up against real element IDs at import/DOMContentLoaded time).
++ */
++import { readFileSync } from "node:fs";
++import { fileURLToPath } from "node:url";
++import path from "node:path";
++import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
++import { resetChromeMock } from "../helpers/chrome-mock.js";
++import { mountBlockedDom, fireDomContentLoaded, flushMicrotasks } from "../helpers/dom-fixture.js";
++
++const __dirname = path.dirname(fileURLToPath(import.meta.url));
++const ROOT = path.resolve(__dirname, "..", "..");
++
++/** Reads the flip clock's visible readout as "MM:SS" (top halves). */
++function readFlipDigits(mount) {
++  const digits = [...mount.querySelectorAll(".flip-digit")].map(
++    (card) => card.querySelector(".flip-top .flip-glyph").textContent
++  );
++  return `${digits[0]}${digits[1]}:${digits[2]}${digits[3]}`;
++}
++
++async function mountBlocked(initialLocalStorage = {}) {
++  resetChromeMock();
++  if (Object.keys(initialLocalStorage).length > 0) {
++    await chrome.storage.local.set(initialLocalStorage);
++  }
++  mountBlockedDom();
++  vi.resetModules();
++  // blocked.js first: it exposes window.__focusguardTimer at module top
++  // level, which blocked-chat.js's timer strip reads during init.
++  await import("../../blocked/blocked.js");
++  await import("../../blocked/blocked-chat.js");
++  fireDomContentLoaded();
++  await flushMicrotasks();
++}
++
++describe("blocked page — chat overlay does not cover the timer", () => {
++  beforeEach(async () => {
++    await mountBlocked();
++  });
++
++  afterEach(() => {
++    vi.useRealTimers();
++    document.body.innerHTML = "";
++  });
++
++  it("overlay is hidden at load and #btn-start is reachable", () => {
++    const overlay = document.getElementById("chat-overlay");
++    const btnStart = document.getElementById("btn-start");
++    const launcher = document.getElementById("chat-launcher");
++
++    // The overlay must start closed (no `.open` class) — an open overlay
++    // is the only state in which it covers the timer controls.
++    expect(overlay).toBeTruthy();
++    expect(overlay.classList.contains("open")).toBe(false);
++
++    // The launcher that re-opens Bao must exist with an accessible name.
++    expect(launcher).toBeTruthy();
++    expect(launcher.getAttribute("aria-label")).toMatch(/bao/i);
++
++    // jsdom applies no stylesheets, so also pin the visibility contract
++    // directly against the shipped CSS: `.chat-overlay` defaults to
++    // display:none and only `.chat-overlay.open` is display:flex.
++    const css = readFileSync(path.join(ROOT, "blocked", "blocked-chat.css"), "utf8");
++    expect(css).toMatch(/\.chat-overlay\s*\{[^}]*display:\s*none/);
++    expect(css).toMatch(/\.chat-overlay\.open\s*\{[^}]*display:\s*flex/);
++
++    // And the control itself must be present and enabled.
++    expect(btnStart).toBeTruthy();
++    expect(btnStart.disabled).toBe(false);
++  });
++});
++
++describe("blocked page — timer controls", () => {
++  beforeEach(async () => {
++    await mountBlocked();
++  });
++
++  afterEach(() => {
++    vi.useRealTimers();
++    document.body.innerHTML = "";
++  });
++
++  it("clicking #btn-start advances #timer-digits after a 1s tick", async () => {
++    const timerDigits = document.getElementById("timer-digits");
++    const btnStart = document.getElementById("btn-start");
++
++    expect(timerDigits.textContent).toBe("25:00");
++
++    vi.useFakeTimers();
++    btnStart.click();
++    await flushMicrotasks();
++    // Start paints immediately; the display still shows the full phase.
++    expect(timerDigits.textContent).toBe("25:00");
++
++    await vi.advanceTimersByTimeAsync(1000);
++    expect(timerDigits.textContent).toBe("24:59");
++  });
++
++  it("pause stops the countdown and reset restores the full phase", async () => {
++    const timerDigits = document.getElementById("timer-digits");
++    const btnStart = document.getElementById("btn-start");
++    const btnReset = document.getElementById("btn-reset");
++
++    vi.useFakeTimers();
++    btnStart.click();
++    await vi.advanceTimersByTimeAsync(1000);
++    expect(timerDigits.textContent).toBe("24:59");
++
++    // Pause freezes the display; further ticks must not change it.
++    btnStart.click();
++    await vi.advanceTimersByTimeAsync(3000);
++    expect(timerDigits.textContent).toBe("24:59");
++
++    // Reset returns to the full work phase and is not running.
++    btnReset.click();
++    await flushMicrotasks();
++    expect(timerDigits.textContent).toBe("25:00");
++    await vi.advanceTimersByTimeAsync(1000);
++    expect(timerDigits.textContent).toBe("25:00");
++  });
++
++  it("skip moves to the next phase (short break) without running", async () => {
++    const timerDigits = document.getElementById("timer-digits");
++    const phaseText = document.getElementById("phase-text");
++    const btnSkip = document.getElementById("btn-skip");
++
++    vi.useFakeTimers();
++    btnSkip.click();
++    await flushMicrotasks();
++
++    expect(timerDigits.textContent).toBe("05:00");
++    expect(phaseText.textContent).toBe("Short Break");
++
++    // Skipped-to phase starts paused.
++    await vi.advanceTimersByTimeAsync(1000);
++    expect(timerDigits.textContent).toBe("05:00");
++  });
++});
++
++describe("blocked page — overlay open/close", () => {
++  beforeEach(async () => {
++    await mountBlocked();
++  });
++
++  afterEach(() => {
++    vi.useRealTimers();
++    document.body.innerHTML = "";
++  });
++
++  it("launcher click opens the overlay and focuses the chat input", () => {
++    const overlay = document.getElementById("chat-overlay");
++    const launcher = document.getElementById("chat-launcher");
++    const chatInput = document.getElementById("chat-input");
++
++    launcher.click();
++    expect(overlay.classList.contains("open")).toBe(true);
++    expect(document.activeElement).toBe(chatInput);
++  });
++
++  it("timer-strip click closes an open overlay", () => {
++    const overlay = document.getElementById("chat-overlay");
++    const launcher = document.getElementById("chat-launcher");
++    const timerStrip = document.getElementById("timer-strip");
++
++    launcher.click();
++    expect(overlay.classList.contains("open")).toBe(true);
++
++    timerStrip.click();
++    expect(overlay.classList.contains("open")).toBe(false);
++  });
++});
++
++describe("blocked page — keyboard shortcuts", () => {
++  beforeEach(async () => {
++    await mountBlocked();
++  });
++
++  afterEach(() => {
++    vi.useRealTimers();
++    document.body.innerHTML = "";
++  });
++
++  function pressSpace() {
++    document.dispatchEvent(
++      new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true })
++    );
++  }
++
++  function pressEscape() {
++    document.dispatchEvent(
++      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })
++    );
++  }
++
++  it("Space toggles the timer start/pause", async () => {
++    expect(window.__focusguardTimer.isRunning()).toBe(false);
++
++    pressSpace();
++    await flushMicrotasks();
++    expect(window.__focusguardTimer.isRunning()).toBe(true);
++
++    pressSpace();
++    await flushMicrotasks();
++    expect(window.__focusguardTimer.isRunning()).toBe(false);
++  });
++
++  it("Space is ignored while the chat overlay is open", async () => {
++    document.getElementById("chat-launcher").click();
++    expect(document.getElementById("chat-overlay").classList.contains("open")).toBe(true);
++
++    pressSpace();
++    await flushMicrotasks();
++    expect(window.__focusguardTimer.isRunning()).toBe(false);
++  });
++
++  it("Space is ignored while focus is in a typing context", async () => {
++    const chatInput = document.getElementById("chat-input");
++    chatInput.focus();
++    expect(document.activeElement).toBe(chatInput);
++
++    pressSpace();
++    await flushMicrotasks();
++    expect(window.__focusguardTimer.isRunning()).toBe(false);
++  });
++
++  it("Escape closes an open chat overlay", () => {
++    const overlay = document.getElementById("chat-overlay");
++    document.getElementById("chat-launcher").click();
++    expect(overlay.classList.contains("open")).toBe(true);
++
++    pressEscape();
++    expect(overlay.classList.contains("open")).toBe(false);
++  });
++
++  it("Escape is a no-op when the overlay is closed and does not touch the timer", async () => {
++    pressSpace();
++    await flushMicrotasks();
++    expect(window.__focusguardTimer.isRunning()).toBe(true);
++
++    pressEscape();
++    expect(document.getElementById("chat-overlay").classList.contains("open")).toBe(false);
++    expect(window.__focusguardTimer.isRunning()).toBe(true);
++  });
++});
++
++describe("blocked page — shared timer state: external writes (ADR-0002)", () => {
++  beforeEach(async () => {
++    await mountBlocked();
++  });
++
++  afterEach(() => {
++    vi.useRealTimers();
++    document.body.innerHTML = "";
++  });
++
++  it("a pause written from the popup stops the blocked page's ticker and heartbeat", async () => {
++    const timerDigits = document.getElementById("timer-digits");
++    const btnStart = document.getElementById("btn-start");
++
++    vi.useFakeTimers();
++    btnStart.click();
++    await flushMicrotasks();
++    await vi.advanceTimersByTimeAsync(2000);
++    expect(timerDigits.textContent).toBe("24:58");
++
++    // The popup pauses the shared state; its pause() write lands in
++    // chrome.storage.local while this page is open.
++    await chrome.storage.local.set({
++      focusguard_timer_state: {
++        phase: "work",
++        currentRound: 1,
++        totalRounds: 4,
++        totalTime: 1500,
++        isRunning: false,
++        endsAt: null,
++        remaining: 1498,
++        savedAt: Date.now(),
++      },
++    });
++    await flushMicrotasks();
++
++    // Adopted as ground truth: paused, frozen readout.
++    expect(window.__focusguardTimer.isRunning()).toBe(false);
++    expect(timerDigits.textContent).toBe("24:58");
++
++    // The ticker is disarmed — the display must not advance.
++    await vi.advanceTimersByTimeAsync(3000);
++    expect(timerDigits.textContent).toBe("24:58");
++
++    // The 10s heartbeat is disarmed too — it must not re-persist a
++    // running state over the popup's pause.
++    await vi.advanceTimersByTimeAsync(11_000);
++    const data = await chrome.storage.local.get(["focusguard_timer_state"]);
++    expect(data.focusguard_timer_state.isRunning).toBe(false);
++    expect(data.focusguard_timer_state.remaining).toBe(1498);
++  });
++
++  it("a start written from the popup renders the blocked page running and ticking", async () => {
++    const timerDigits = document.getElementById("timer-digits");
++    expect(window.__focusguardTimer.isRunning()).toBe(false);
++
++    vi.useFakeTimers();
++    const now = Date.now();
++    await chrome.storage.local.set({
++      focusguard_timer_state: {
++        phase: "work",
++        currentRound: 1,
++        totalRounds: 4,
++        totalTime: 1500,
++        isRunning: true,
++        endsAt: now + 1500 * 1000,
++        remaining: null,
++        savedAt: now,
++      },
++    });
++    await flushMicrotasks();
++
++    // Adopted: the page renders running and the ticker is armed.
++    expect(window.__focusguardTimer.isRunning()).toBe(true);
++    expect(timerDigits.textContent).toBe("25:00");
++
++    await vi.advanceTimersByTimeAsync(1000);
++    expect(timerDigits.textContent).toBe("24:59");
++  });
++});
++
++describe("blocked page — flip clock", () => {
++  beforeEach(async () => {
++    await mountBlocked();
++  });
++
++  afterEach(() => {
++    vi.useRealTimers();
++    document.body.innerHTML = "";
++  });
++
++  it("mounts inside .timer-display and shows the initial 25:00", () => {
++    const mount = document.getElementById("flip-clock");
++    expect(mount).toBeTruthy();
++    expect(mount.classList.contains("flip-clock")).toBe(true);
++    expect(mount.getAttribute("aria-hidden")).toBe("true");
++    expect(mount.querySelectorAll(".flip-digit")).toHaveLength(4);
++    expect(mount.querySelectorAll(".flip-colon")).toHaveLength(1);
++
++    expect(readFlipDigits(mount)).toBe("25:00");
++
++    // #timer-digits stays in the DOM and still backs getDisplay().
++    const timerDigits = document.getElementById("timer-digits");
++    expect(timerDigits).toBeTruthy();
++    expect(timerDigits.textContent).toBe("25:00");
++    expect(window.__focusguardTimer.getDisplay()).toBe("25:00");
++  });
++
++  it("flips the seconds digit after a 1s tick; getDisplay() contract intact", async () => {
++    const mount = document.getElementById("flip-clock");
++    const btnStart = document.getElementById("btn-start");
++
++    vi.useFakeTimers();
++    btnStart.click();
++    await flushMicrotasks();
++    expect(readFlipDigits(mount)).toBe("25:00");
++
++    await vi.advanceTimersByTimeAsync(1000);
++    expect(readFlipDigits(mount)).toBe("24:59");
++
++    // Diffing contract: minutes-tens "2" did not change → no flip class;
++    // the three changed digits carry it while their animation runs.
++    const cards = mount.querySelectorAll(".flip-digit");
++    expect(cards[0].classList.contains("is-flipping")).toBe(false);
++    expect(cards[1].classList.contains("is-flipping")).toBe(true);
++    expect(cards[2].classList.contains("is-flipping")).toBe(true);
++    expect(cards[3].classList.contains("is-flipping")).toBe(true);
++
++    // The hidden #timer-digits and its API mirror stay the source of truth.
++    expect(document.getElementById("timer-digits").textContent).toBe("24:59");
++    expect(window.__focusguardTimer.getDisplay()).toBe("24:59");
++    expect(window.__focusguardTimer.isRunning()).toBe(true);
++  });
++
++  it("keeps the flip clock in sync through pause and reset", async () => {
++    const mount = document.getElementById("flip-clock");
++    const btnStart = document.getElementById("btn-start");
++    const btnReset = document.getElementById("btn-reset");
++
++    vi.useFakeTimers();
++    btnStart.click();
++    await vi.advanceTimersByTimeAsync(1000);
++    expect(readFlipDigits(mount)).toBe("24:59");
++
++    // Pause freezes the flip clock too.
++    btnStart.click();
++    await vi.advanceTimersByTimeAsync(3000);
++    expect(readFlipDigits(mount)).toBe("24:59");
++
++    // Reset repaints the full phase; the new digits are visible
++    // immediately even while their flip animations run.
++    btnReset.click();
++    await flushMicrotasks();
++    expect(readFlipDigits(mount)).toBe("25:00");
++    expect(window.__focusguardTimer.getDisplay()).toBe("25:00");
++  });
++});
+diff --git a/tests/helpers/chrome-mock.js b/tests/helpers/chrome-mock.js
+index ea55d1c..a71e71d 100644
+--- a/tests/helpers/chrome-mock.js
++++ b/tests/helpers/chrome-mock.js
+@@ -77,6 +77,9 @@
+  *     Default implementation resolves with `{ id: tabId, ...updateProperties }`.
+  *     Inspect calls via chrome.tabs.update.mock.calls, or override behavior
+  *     per-test with chrome.tabs.update.mockRejectedValueOnce(...) etc.
++ *   chrome.tabs.create -> vi.fn((createProperties) => Promise)
++ *     Default implementation resolves with `{ id: 9999, ...createProperties }`.
++ *     Inspect calls via chrome.tabs.create.mock.calls.
+  *
+  * chrome.webNavigation
+  * --------------------
+@@ -231,6 +234,9 @@ function buildMock() {
+     update: vi.fn((tabId, updateProperties) =>
+       Promise.resolve({ id: tabId, ...updateProperties })
+     ),
++    create: vi.fn((createProperties) =>
++      Promise.resolve({ id: 9999, ...createProperties })
++    ),
+   };
+ 
+   const onBeforeNavigateListeners = new Set();
+diff --git a/tests/helpers/dom-fixture.js b/tests/helpers/dom-fixture.js
+index 83c1248..27f793a 100644
+--- a/tests/helpers/dom-fixture.js
++++ b/tests/helpers/dom-fixture.js
+@@ -47,8 +47,52 @@ export function fireDomContentLoaded() {
+   document.dispatchEvent(new Event("DOMContentLoaded", { bubbles: true, cancelable: true }));
+ }
+ 
+-/** Flushes the microtask queue N times (default enough for a few chained awaits). */
+-export async function flushMicrotasks(times = 6) {
++/**
++ * Installs an in-memory localStorage on window when the environment's is
++ * unusable. Newer Node runtimes expose an experimental `localStorage`
++ * global that shadows jsdom's and returns undefined unless the process
++ * was started with --localstorage-file — under Vitest's threads pool that
++ * shadow wins, so popup.js's `window.localStorage` reads come back
++ * undefined. Real Chrome always has a working localStorage, so this is
++ * strictly a test-environment shim. Returns the storage object.
++ */
++export function ensureLocalStorage() {
++  let usable = false;
++  try {
++    usable = window.localStorage != null;
++  } catch {
++    usable = false;
++  }
++  if (usable) return window.localStorage;
++
++  const store = new Map();
++  const shim = {
++    getItem: (key) => (store.has(key) ? store.get(key) : null),
++    setItem: (key, value) => store.set(key, String(value)),
++    removeItem: (key) => store.delete(key),
++    clear: () => store.clear(),
++    key: (index) => [...store.keys()][index] ?? null,
++    get length() {
++      return store.size;
++    },
++  };
++  Object.defineProperty(window, "localStorage", {
++    value: shim,
++    configurable: true,
++    writable: true,
++  });
++  return shim;
++}
++
++/**
++ * Flushes the microtask queue N times. Default is sized for queued
++ * read-modify-write chains (popup.js's queueSiteMutation): each queued
++ * mutation costs several interleaved microtask hops (storage.get await,
++ * storage.set await, queue-link reactions), so two rapid mutations need
++ * well over the "few chained awaits" that 6 covers. Over-flushing is
++ * harmless — a settled promise just resolves an already-settled promise.
++ */
++export async function flushMicrotasks(times = 20) {
+   for (let i = 0; i < times; i++) {
+     await Promise.resolve();
+   }
+diff --git a/tests/lib/flip-clock.test.js b/tests/lib/flip-clock.test.js
+new file mode 100644
+index 0000000..37f2228
+--- /dev/null
++++ b/tests/lib/flip-clock.test.js
+@@ -0,0 +1,215 @@
++/**
++ * flip-clock.test.js — unit tests for lib/flip-clock.js.
++ *
++ * The core contract is DIGIT DIFFING: setTime("MM:SS") must animate ONLY
++ * the cards whose digit changed (seconds-ones flips every tick; the minute
++ * digits flip once per 60 ticks). "Animating" is observable as the card's
++ * `.is-flipping` class + transient `.flip-leaf` elements; unchanged cards
++ * must carry neither.
++ */
++import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
++import { createFlipClock } from "../../lib/flip-clock.js";
++
++/** Readout helper: the currently visible digit of each card, in order. */
++function readDigits(container) {
++  return [...container.querySelectorAll(".flip-digit")].map(
++    (card) => card.querySelector(".flip-top .flip-glyph").textContent
++  );
++}
++
++function cardsOf(container) {
++  return [...container.querySelectorAll(".flip-digit")];
++}
++
++describe("flip clock — structure", () => {
++  let container;
++  let clock;
++
++  beforeEach(() => {
++    container = document.createElement("div");
++    document.body.appendChild(container);
++    clock = createFlipClock(container);
++  });
++
++  afterEach(() => {
++    clock.destroy();
++    document.body.innerHTML = "";
++  });
++
++  it("builds four digit cards and one colon separator", () => {
++    expect(cardsOf(container)).toHaveLength(4);
++    expect(container.querySelectorAll(".flip-colon")).toHaveLength(1);
++    // Every card has a top and a bottom static half.
++    cardsOf(container).forEach((card) => {
++      expect(card.querySelector(".flip-top")).toBeTruthy();
++      expect(card.querySelector(".flip-bottom")).toBeTruthy();
++    });
++  });
++
++  it("marks the container aria-hidden and adds the flip-clock class", () => {
++    expect(container.getAttribute("aria-hidden")).toBe("true");
++    expect(container.classList.contains("flip-clock")).toBe(true);
++  });
++});
++
++describe("flip clock — setTime", () => {
++  let container;
++  let clock;
++
++  beforeEach(() => {
++    container = document.createElement("div");
++    document.body.appendChild(container);
++    clock = createFlipClock(container);
++  });
++
++  afterEach(() => {
++    vi.useRealTimers();
++    clock.destroy();
++    document.body.innerHTML = "";
++  });
++
++  it("first paint shows the initial time without flipping anything", () => {
++    clock.setTime("25:00");
++    expect(readDigits(container).join("")).toBe("2500");
++    expect(clock.getTime()).toBe("25:00");
++    cardsOf(container).forEach((card) => {
++      expect(card.classList.contains("is-flipping")).toBe(false);
++      expect(card.querySelectorAll(".flip-leaf")).toHaveLength(0);
++    });
++  });
++
++  it("flips ONLY the digits that changed", () => {
++    clock.setTime("25:00");
++    clock.setTime("24:59");
++
++    const cards = cardsOf(container);
++    // "2" unchanged → no flip. "5→4", "0→5", "0→9" → flip.
++    expect(cards[0].classList.contains("is-flipping")).toBe(false);
++    expect(cards[0].querySelectorAll(".flip-leaf")).toHaveLength(0);
++    for (let i = 1; i < 4; i++) {
++      expect(cards[i].classList.contains("is-flipping")).toBe(true);
++      // One folding top leaf + one unfolding bottom leaf per changed card.
++      expect(cards[i].querySelectorAll(".flip-leaf")).toHaveLength(2);
++    }
++
++    // The new digits are already readable on the static top halves.
++    expect(readDigits(container).join("")).toBe("2459");
++  });
++
++  it("does not re-flip when the same time is set again", () => {
++    clock.setTime("25:00");
++    clock.setTime("24:59");
++    clock.setTime("24:59"); // no-op
++
++    const cards = cardsOf(container);
++    // State is identical to the previous test's first flip — but a second
++    // setTime with the same value must not add leaves or restart flips.
++    cards.forEach((card) => {
++      expect(card.querySelectorAll(".flip-leaf").length).toBeLessThanOrEqual(2);
++    });
++    expect(readDigits(container).join("")).toBe("2459");
++  });
++
++  it("minute digits stay untouched on a plain seconds tick", () => {
++    clock.setTime("24:59");
++    clock.setTime("24:58"); // only the seconds-ones digit changes
++
++    const cards = cardsOf(container);
++    expect(cards[0].classList.contains("is-flipping")).toBe(false);
++    expect(cards[1].classList.contains("is-flipping")).toBe(false);
++    expect(cards[2].classList.contains("is-flipping")).toBe(false);
++    expect(cards[3].classList.contains("is-flipping")).toBe(true);
++  });
++
++  it("finalizes flips after the animation window (leaves removed, bottoms synced)", async () => {
++    vi.useFakeTimers();
++    clock.setTime("25:00");
++    clock.setTime("24:59");
++
++    // Full flip = 2 x 300ms. After that, leaves are gone and the static
++    // bottom halves match the top halves.
++    await vi.advanceTimersByTimeAsync(700);
++
++    cardsOf(container).forEach((card, i) => {
++      expect(card.classList.contains("is-flipping")).toBe(false);
++      expect(card.querySelectorAll(".flip-leaf")).toHaveLength(0);
++      const top = card.querySelector(".flip-top .flip-glyph").textContent;
++      const bottom = card.querySelector(".flip-bottom .flip-glyph").textContent;
++      expect(bottom).toBe(top);
++      expect(top).toBe("2459"[i]);
++    });
++  });
++
++  it("clamps malformed input to 00:00", () => {
++    clock.setTime("garbage");
++    expect(readDigits(container).join("")).toBe("0000");
++    expect(clock.getTime()).toBe("00:00");
++  });
++
++  it("destroy() clears pending timers and empties the container", async () => {
++    vi.useFakeTimers();
++    clock.setTime("25:00");
++    clock.setTime("24:59");
++    clock.destroy();
++
++    expect(container.innerHTML).toBe("");
++    expect(container.classList.contains("flip-clock")).toBe(false);
++    // No dangling timeouts fire after destroy (would throw if they touched
++    // the removed cards' DOM refs in a way that assumes mount state).
++    await vi.advanceTimersByTimeAsync(1000);
++    expect(container.innerHTML).toBe("");
++    // setTime after destroy is a no-op.
++    clock.setTime("12:34");
++    expect(container.innerHTML).toBe("");
++  });
++});
++
++describe("flip clock — reduced motion", () => {
++  it("updates digits instantly with no leaves or flipping classes when prefers-reduced-motion matches", () => {
++    // jsdom ships no matchMedia; stub it to match the reduce query.
++    const originalMatchMedia = window.matchMedia;
++    window.matchMedia = vi.fn(() => ({ matches: true }));
++
++    try {
++      const container = document.createElement("div");
++      document.body.appendChild(container);
++      const clock = createFlipClock(container);
++
++      clock.setTime("25:00");
++      clock.setTime("24:59"); // three digits change
++
++      // The new readout is visible IMMEDIATELY...
++      expect(readDigits(container).join("")).toBe("2459");
++      expect(clock.getTime()).toBe("24:59");
++
++      // ...with no animation artifacts on any card.
++      cardsOf(container).forEach((card, i) => {
++        expect(card.classList.contains("is-flipping")).toBe(false);
++        expect(card.querySelectorAll(".flip-leaf")).toHaveLength(0);
++        // Bottom halves catch up instantly too.
++        const top = card.querySelector(".flip-top .flip-glyph").textContent;
++        const bottom = card.querySelector(".flip-bottom .flip-glyph").textContent;
++        expect(bottom).toBe(top);
++        expect(top).toBe("2459"[i]);
++      });
++
++      // And nothing appears even after the would-be animation window.
++      vi.useFakeTimers();
++      vi.advanceTimersByTime(1000);
++      cardsOf(container).forEach((card) => {
++        expect(card.classList.contains("is-flipping")).toBe(false);
++        expect(card.querySelectorAll(".flip-leaf")).toHaveLength(0);
++      });
++      vi.useRealTimers();
++
++      clock.destroy();
++    } finally {
++      if (originalMatchMedia === undefined) {
++        delete window.matchMedia;
++      } else {
++        window.matchMedia = originalMatchMedia;
++      }
++      document.body.innerHTML = "";
++    }
++  });
++});
+diff --git a/tests/lib/timer.test.js b/tests/lib/timer.test.js
+index 2646dd9..fb624c8 100644
+--- a/tests/lib/timer.test.js
++++ b/tests/lib/timer.test.js
+@@ -5,6 +5,10 @@ import {
+   remainingSeconds,
+   advancePhase,
+   formatTime,
++  start,
++  pause,
++  reset,
++  skip,
+ } from "../../lib/timer.js";
+ 
+ const settings = { workDuration: 25, shortBreak: 5, longBreak: 15, roundsBeforeLong: 4 };
+@@ -186,6 +190,122 @@ describe("advancePhase — full cycle", () => {
+   });
+ });
+ 
++describe("start", () => {
++  it("starts an idle state at full phase length, anchoring endsAt to now", () => {
++    const now = 1_000_000;
++    const state = initialState(settings);
++    const next = start(state, now);
++    expect(next.isRunning).toBe(true);
++    expect(next.endsAt).toBe(now + state.totalTime * 1000);
++    expect(next.remaining).toBeNull();
++    expect(next.phase).toBe("work");
++  });
++
++  it("resumes a paused state from the frozen remaining time, not the full phase", () => {
++    const now = 1_000_000;
++    const state = { ...initialState(settings), remaining: 120 };
++    const next = start(state, now);
++    expect(next.endsAt).toBe(now + 120 * 1000);
++  });
++
++  it("falls back to totalTime when remaining is null", () => {
++    const now = 1_000_000;
++    const state = { ...initialState(settings), remaining: null };
++    const next = start(state, now);
++    expect(next.endsAt).toBe(now + state.totalTime * 1000);
++  });
++
++  it("is a no-op (returns the same state) when already running", () => {
++    const state = { ...initialState(settings), isRunning: true, endsAt: 999, remaining: null };
++    expect(start(state, 5)).toBe(state);
++  });
++
++  it("does not mutate the input state", () => {
++    const state = initialState(settings);
++    start(state, 0);
++    expect(state.isRunning).toBe(false);
++    expect(state.remaining).toBe(state.totalTime);
++  });
++});
++
++describe("pause", () => {
++  it("freezes a running state: remaining captured from the deadline, endsAt dropped", () => {
++    const now = 1_000_000;
++    const state = { ...initialState(settings), isRunning: true, endsAt: now + 45_000, remaining: null };
++    const next = pause(state, now);
++    expect(next.isRunning).toBe(false);
++    expect(next.endsAt).toBeNull();
++    expect(next.remaining).toBe(45);
++  });
++
++  it("rounds partial seconds up, matching remainingSeconds", () => {
++    const now = 1_000_000;
++    const state = { ...initialState(settings), isRunning: true, endsAt: now + 1500, remaining: null };
++    expect(pause(state, now).remaining).toBe(2);
++  });
++
++  it("on an already-paused state keeps the frozen remaining (safe no-op)", () => {
++    const state = { ...initialState(settings), remaining: 77 };
++    const next = pause(state, 9_999_999);
++    expect(next.isRunning).toBe(false);
++    expect(next.remaining).toBe(77);
++  });
++});
++
++describe("reset", () => {
++  it("returns a fresh idle work state built from settings", () => {
++    const next = reset({ workDuration: 30, shortBreak: 10, longBreak: 20, roundsBeforeLong: 3 });
++    expect(next).toEqual(initialState({ workDuration: 30, shortBreak: 10, longBreak: 20, roundsBeforeLong: 3 }));
++    expect(next.phase).toBe("work");
++    expect(next.isRunning).toBe(false);
++    expect(next.totalTime).toBe(30 * 60);
++    expect(next.totalRounds).toBe(3);
++  });
++
++  it("discards any in-progress phase/round of the previous session", () => {
++    const mid = skip(skip(initialState(settings), settings, 0), settings, 1); // into round 2 work
++    const next = reset(settings);
++    expect(next.phase).toBe("work");
++    expect(next.currentRound).toBe(1);
++    expect(next.totalTime).toBe(mid.phase === "work" ? mid.totalTime : phaseDuration("work", settings));
++  });
++});
++
++describe("skip", () => {
++  it("advances to the next phase, paused, with the new phase's full duration", () => {
++    const now = 2_000_000;
++    const next = skip(initialState(settings), settings, now);
++    expect(next.phase).toBe("shortBreak");
++    expect(next.isRunning).toBe(false);
++    expect(next.endsAt).toBeNull();
++    expect(next.remaining).toBe(5 * 60);
++  });
++
++  it("skips a RUNNING phase to a paused next phase (never keeps running)", () => {
++    const now = 2_000_000;
++    const running = start(initialState(settings), now);
++    const next = skip(running, settings, now + 5000);
++    expect(next.isRunning).toBe(false);
++    expect(next.endsAt).toBeNull();
++    expect(next.phase).toBe("shortBreak");
++  });
++
++  it("follows the same round/phase cycle as advancePhase", () => {
++    let state = initialState(settings);
++    state = skip(state, settings, 0); // work r1 -> shortBreak
++    state = skip(state, settings, 1); // shortBreak -> work r2
++    expect(state.phase).toBe("work");
++    expect(state.currentRound).toBe(2);
++  });
++
++  it("does not mutate the input state", () => {
++    const state = initialState(settings);
++    skip(state, settings, 0);
++    expect(state.phase).toBe("work");
++    expect(state.currentRound).toBe(1);
++  });
++});
++
+ describe("formatTime", () => {
+   it("zero-pads minutes and seconds under 10", () => {
+     expect(formatTime(65)).toBe("01:05");
+diff --git a/tests/popup/popup.test.js b/tests/popup/popup.test.js
+index 2927053..a3368cc 100644
+--- a/tests/popup/popup.test.js
++++ b/tests/popup/popup.test.js
+@@ -1,10 +1,15 @@
+ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+ import { resetChromeMock } from "../helpers/chrome-mock.js";
+-import { mountPopupDom, fireDomContentLoaded, flushMicrotasks } from "../helpers/dom-fixture.js";
++import { mountPopupDom, fireDomContentLoaded, flushMicrotasks, ensureLocalStorage } from "../helpers/dom-fixture.js";
+ 
+-async function mountPopup(initialStorage = {}) {
++async function mountPopup(initialStorage = {}, initialLocalStorage = {}) {
+   resetChromeMock();
+   await chrome.storage.sync.set(initialStorage);
++  // Seeded BEFORE the module imports, so no listener exists yet — the
++  // writes land silently and initTimerTab's restore path observes them.
++  if (Object.keys(initialLocalStorage).length > 0) {
++    await chrome.storage.local.set(initialLocalStorage);
++  }
+   mountPopupDom();
+   vi.resetModules();
+   await import("../../popup/popup.js");
+@@ -221,8 +226,6 @@ describe("popup.js — C3: rapid-succession delete keyed by domain", () => {
+ 
+     await flushMicrotasks();
+ 
+-    console.log("DEBUG all set calls:", JSON.stringify(chrome.storage.sync.set.mock.calls, null, 2));
+-
+     const data = await chrome.storage.sync.get(["sites"]);
+     const byDomain = Object.fromEntries(data.sites.map((s) => [s.domain, s.active]));
+     expect(byDomain).toEqual({
+@@ -328,3 +331,316 @@ describe("popup.js — intervention mode", () => {
+     expect(elementToggles).toBeNull();
+   });
+ });
++
++/** Reads the popup flip clock's visible readout as "MM:SS" (top halves). */
++function readPopupFlipDigits() {
++  const mount = document.getElementById("popup-flip-clock");
++  const digits = [...mount.querySelectorAll(".flip-digit")].map(
++    (card) => card.querySelector(".flip-top .flip-glyph").textContent
++  );
++  return `${digits[0]}${digits[1]}:${digits[2]}${digits[3]}`;
++}
++
++describe("popup.js — tabs", () => {
++  beforeEach(() => {
++    ensureLocalStorage();
++  });
++
++  afterEach(() => {
++    vi.useRealTimers();
++    window.localStorage.clear();
++  });
++
++  it("defaults to the Blocklist tab: sites panel visible, timer panel hidden", async () => {
++    await mountPopup({ enabled: true, sites: [] });
++
++    expect(document.getElementById("tab-btn-sites").getAttribute("aria-selected")).toBe("true");
++    expect(document.getElementById("tab-btn-timer").getAttribute("aria-selected")).toBe("false");
++    expect(document.getElementById("tab-panel-sites").hidden).toBe(false);
++    expect(document.getElementById("tab-panel-timer").hidden).toBe(true);
++  });
++
++  it("clicking the Timer tab shows the timer panel, hides the sites panel, and updates aria-selected", async () => {
++    await mountPopup({ enabled: true, sites: [] });
++
++    document.getElementById("tab-btn-timer").click();
++
++    expect(document.getElementById("tab-btn-timer").getAttribute("aria-selected")).toBe("true");
++    expect(document.getElementById("tab-btn-sites").getAttribute("aria-selected")).toBe("false");
++    expect(document.getElementById("tab-panel-timer").hidden).toBe(false);
++    expect(document.getElementById("tab-panel-sites").hidden).toBe(true);
++
++    // Switching back restores the original state.
++    document.getElementById("tab-btn-sites").click();
++    expect(document.getElementById("tab-btn-sites").getAttribute("aria-selected")).toBe("true");
++    expect(document.getElementById("tab-panel-sites").hidden).toBe(false);
++    expect(document.getElementById("tab-panel-timer").hidden).toBe(true);
++  });
++
++  it("ArrowRight/ArrowLeft move between tabs and activate them", async () => {
++    await mountPopup({ enabled: true, sites: [] });
++
++    const sitesTab = document.getElementById("tab-btn-sites");
++    const timerTab = document.getElementById("tab-btn-timer");
++
++    sitesTab.focus();
++    sitesTab.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
++    expect(timerTab.getAttribute("aria-selected")).toBe("true");
++    expect(document.getElementById("tab-panel-timer").hidden).toBe(false);
++    expect(document.activeElement).toBe(timerTab);
++
++    timerTab.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
++    expect(sitesTab.getAttribute("aria-selected")).toBe("true");
++    expect(document.getElementById("tab-panel-sites").hidden).toBe(false);
++    expect(document.activeElement).toBe(sitesTab);
++  });
++
++  it("persists the last active tab in localStorage and restores it on next open", async () => {
++    await mountPopup({ enabled: true, sites: [] });
++    document.getElementById("tab-btn-timer").click();
++    expect(window.localStorage.getItem("focusguard_active_tab")).toBe("tab-btn-timer");
++
++    // Re-open the popup (fresh module instance, same localStorage).
++    await mountPopup({ enabled: true, sites: [] });
++    expect(document.getElementById("tab-btn-timer").getAttribute("aria-selected")).toBe("true");
++    expect(document.getElementById("tab-panel-timer").hidden).toBe(false);
++    expect(document.getElementById("tab-panel-sites").hidden).toBe(true);
++  });
++});
++
++describe("popup.js — Timer tab", () => {
++  beforeEach(() => {
++    ensureLocalStorage();
++  });
++
++  afterEach(() => {
++    vi.useRealTimers();
++    window.localStorage.clear();
++  });
++
++  it("renders idle defaults from the settings sliders when no timer state is stored", async () => {
++    await mountPopup({
++      enabled: true,
++      sites: [],
++      pomodoroSettings: { workDuration: 30, shortBreak: 10, longBreak: 20, roundsBeforeLong: 3 },
++    });
++
++    expect(document.getElementById("popup-timer-digits").textContent).toBe("30:00");
++    expect(readPopupFlipDigits()).toBe("30:00");
++    expect(document.getElementById("popup-phase-label").textContent).toBe("WORK");
++    expect(document.getElementById("popup-session-label").textContent).toBe("Session 1 of 3");
++    expect(document.querySelectorAll("#popup-session-dots .popup-dot")).toHaveLength(3);
++  });
++
++  it("Start writes focusguard_timer_state to storage.local with isRunning true", async () => {
++    await mountPopup({
++      enabled: true,
++      sites: [],
++      pomodoroSettings: { workDuration: 25, shortBreak: 5, longBreak: 15, roundsBeforeLong: 4 },
++    });
++
++    document.getElementById("timer-start-btn").click();
++    await flushMicrotasks();
++
++    const data = await chrome.storage.local.get(["focusguard_timer_state"]);
++    const state = data.focusguard_timer_state;
++    expect(state).toBeTruthy();
++    expect(state.isRunning).toBe(true);
++    expect(state.phase).toBe("work");
++    expect(state.totalTime).toBe(25 * 60);
++    expect(state.totalRounds).toBe(4);
++    expect(typeof state.endsAt).toBe("number");
++    expect(state.remaining).toBeNull();
++    expect(typeof state.savedAt).toBe("number");
++
++    // The popup readout reflects the running state immediately.
++    expect(document.getElementById("popup-timer-digits").textContent).toBe("25:00");
++  });
++
++  it("Pause/Skip/Reset write the corresponding transitions to the same storage key", async () => {
++    await mountPopup({ enabled: true, sites: [] });
++
++    // Start, then pause ~2s into the phase.
++    vi.useFakeTimers();
++    document.getElementById("timer-start-btn").click();
++    await flushMicrotasks();
++    await vi.advanceTimersByTimeAsync(2000);
++    document.getElementById("timer-pause-btn").click();
++    await flushMicrotasks();
++
++    let data = await chrome.storage.local.get(["focusguard_timer_state"]);
++    expect(data.focusguard_timer_state.isRunning).toBe(false);
++    expect(data.focusguard_timer_state.endsAt).toBeNull();
++    expect(data.focusguard_timer_state.remaining).toBe(25 * 60 - 2);
++    vi.useRealTimers();
++
++    // Skip moves to the short break, paused, full duration.
++    document.getElementById("timer-skip-btn").click();
++    await flushMicrotasks();
++    data = await chrome.storage.local.get(["focusguard_timer_state"]);
++    expect(data.focusguard_timer_state.phase).toBe("shortBreak");
++    expect(data.focusguard_timer_state.isRunning).toBe(false);
++    expect(data.focusguard_timer_state.remaining).toBe(5 * 60);
++
++    // Reset returns to round 1 work at the slider duration.
++    document.getElementById("timer-reset-btn").click();
++    await flushMicrotasks();
++    data = await chrome.storage.local.get(["focusguard_timer_state"]);
++    expect(data.focusguard_timer_state.phase).toBe("work");
++    expect(data.focusguard_timer_state.currentRound).toBe(1);
++    expect(data.focusguard_timer_state.totalTime).toBe(25 * 60);
++  });
++
++  it("a storage.onChanged write from the blocked-page side updates the popup readout live", async () => {
++    await mountPopup({ enabled: true, sites: [] });
++    expect(document.getElementById("popup-timer-digits").textContent).toBe("25:00");
++
++    // Simulate the blocked page persisting a paused short-break state.
++    await chrome.storage.local.set({
++      focusguard_timer_state: {
++        phase: "shortBreak",
++        currentRound: 2,
++        totalRounds: 4,
++        totalTime: 300,
++        isRunning: false,
++        endsAt: null,
++        remaining: 120,
++        savedAt: Date.now(),
++      },
++    });
++    await flushMicrotasks();
++
++    expect(document.getElementById("popup-timer-digits").textContent).toBe("02:00");
++    expect(readPopupFlipDigits()).toBe("02:00");
++    expect(document.getElementById("popup-phase-label").textContent).toBe("BREAK");
++    expect(document.getElementById("popup-session-label").textContent).toBe("Session 2 of 4");
++    const dots = document.querySelectorAll("#popup-session-dots .popup-dot");
++    expect(dots).toHaveLength(4);
++    expect(dots[0].classList.contains("completed")).toBe(true);
++    expect(dots[1].classList.contains("active")).toBe(true);
++  });
++
++  it("while running, a 1s ticker repaints the readout from the endsAt deadline", async () => {
++    await mountPopup({ enabled: true, sites: [] });
++
++    vi.useFakeTimers();
++    const now = Date.now();
++    await chrome.storage.local.set({
++      focusguard_timer_state: {
++        phase: "work",
++        currentRound: 1,
++        totalRounds: 4,
++        totalTime: 1500,
++        isRunning: true,
++        endsAt: now + 65_000,
++        remaining: null,
++        savedAt: now,
++      },
++    });
++    await flushMicrotasks();
++    expect(document.getElementById("popup-timer-digits").textContent).toBe("01:05");
++
++    await vi.advanceTimersByTimeAsync(1000);
++    expect(document.getElementById("popup-timer-digits").textContent).toBe("01:04");
++    expect(readPopupFlipDigits()).toBe("01:04");
++
++    await vi.advanceTimersByTimeAsync(2000);
++    expect(document.getElementById("popup-timer-digits").textContent).toBe("01:02");
++  });
++
++  it("the 1s ticker advances the phase when the deadline passes while the popup is open", async () => {
++    await mountPopup({ enabled: true, sites: [] });
++
++    vi.useFakeTimers();
++    const now = Date.now();
++    await chrome.storage.local.set({
++      focusguard_timer_state: {
++        phase: "work",
++        currentRound: 1,
++        totalRounds: 4,
++        totalTime: 1500,
++        isRunning: true,
++        endsAt: now + 2000,
++        remaining: null,
++        savedAt: now,
++      },
++    });
++    await flushMicrotasks();
++    expect(document.getElementById("popup-timer-digits").textContent).toBe("00:02");
++
++    // Past the deadline the ticker must run the same completion
++    // transition the blocked page uses (skip → next phase, paused)
++    // instead of freezing at 00:00 "running" forever.
++    await vi.advanceTimersByTimeAsync(2100);
++    await flushMicrotasks();
++
++    expect(document.getElementById("popup-phase-label").textContent).toBe("BREAK");
++    expect(document.getElementById("popup-timer-digits").textContent).toBe("05:00");
++
++    const data = await chrome.storage.local.get(["focusguard_timer_state"]);
++    expect(data.focusguard_timer_state.phase).toBe("shortBreak");
++    expect(data.focusguard_timer_state.isRunning).toBe(false);
++  });
++
++  it("restore advances one phase when a fresh running state's deadline already passed", async () => {
++    const now = Date.now();
++    await mountPopup(
++      { enabled: true, sites: [] },
++      {
++        focusguard_timer_state: {
++          phase: "work",
++          currentRound: 1,
++          totalRounds: 4,
++          totalTime: 1500,
++          isRunning: true,
++          endsAt: now - 5000,
++          remaining: null,
++          savedAt: now,
++        },
++      }
++    );
++
++    // Mirrors blocked.js's reviveState(): exactly one phase advance, and
++    // since the session was running it keeps running into the new phase.
++    expect(document.getElementById("popup-phase-label").textContent).toBe("BREAK");
++    expect(document.getElementById("popup-timer-digits").textContent).toBe("05:00");
++  });
++
++  it("discards a stored state older than 2h to idle defaults and never re-persists it", async () => {
++    const staleSavedAt = Date.now() - (2 * 60 * 60 * 1000 + 60_000);
++    await mountPopup(
++      { enabled: true, sites: [] },
++      {
++        focusguard_timer_state: {
++          phase: "shortBreak",
++          currentRound: 2,
++          totalRounds: 4,
++          totalTime: 300,
++          isRunning: false,
++          endsAt: null,
++          remaining: 42,
++          savedAt: staleSavedAt,
++        },
++      }
++    );
++
++    // Stale session is not surfaced — idle defaults from the sliders.
++    expect(document.getElementById("popup-timer-digits").textContent).toBe("25:00");
++    expect(document.getElementById("popup-phase-label").textContent).toBe("WORK");
++    expect(document.getElementById("popup-session-label").textContent).toBe("Session 1 of 4");
++
++    // And not laundered back into storage with a fresh savedAt.
++    const data = await chrome.storage.local.get(["focusguard_timer_state"]);
++    expect(data.focusguard_timer_state.savedAt).toBe(staleSavedAt);
++    expect(data.focusguard_timer_state.phase).toBe("shortBreak");
++  });
++
++  it("Open full-screen timer creates a tab at blocked/blocked.html", async () => {
++    await mountPopup({ enabled: true, sites: [] });
++
++    document.getElementById("open-full-timer-btn").click();
++    expect(chrome.tabs.create).toHaveBeenCalledWith(
++      expect.objectContaining({ url: expect.stringContaining("blocked/blocked.html") })
++    );
++  });
++});

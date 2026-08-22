@@ -1,6 +1,6 @@
----
+﻿---
 date: 2026-08-22
-repo: focusguard
+repo: MindfulBrowse
 branch: master
 commit: (updated)
 ticket: ""
@@ -11,11 +11,11 @@ tags: [research, product-roadmap, monetization, mindful-delay, freemium, privacy
 # Research: Product Roadmap - Mindful Delay + Strip Flow and Freemium Monetization
 
 **Date**: 2026-08-22 (updated)
-**Repo**: focusguard
+**Repo**: MindfulBrowse
 
 ## Executive Summary
 
-FocusGuard will adopt a **Mindful Delay + Strip** flow (inspired by one sec's peer-reviewed model) combined with a **Freemium** monetization strategy. This positions FocusGuard as the privacy-first, free alternative to one sec with superior DOM control.
+MindfulBrowse will adopt a **Mindful Delay + Strip** flow (inspired by one sec's peer-reviewed model) combined with a **Freemium** monetization strategy. This positions MindfulBrowse as the privacy-first, free alternative to one sec with superior DOM control.
 
 ## Market Validation
 
@@ -115,7 +115,7 @@ Conservative estimate (Year 1):
 
 ## Competitive Positioning
 
-| Feature | FocusGuard | one sec | Unhook |
+| Feature | MindfulBrowse | one sec | Unhook |
 |---------|-----------|---------|--------|
 | Mindful delay | Yes (10s) | Yes (various) | No |
 | DOM stripping | Yes | No | Yes (YouTube only) |

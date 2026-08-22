@@ -1,5 +1,5 @@
-/*  ══════════════════════════════════════════════════════
-    FocusGuard — Stripping Styles (Manifest-Declared CSS)
+﻿/*  ══════════════════════════════════════════════════════
+    MindfulBrowse — Stripping Styles (Manifest-Declared CSS)
     Injected synchronously at document_start by the browser
     via content_scripts css array. This guarantees styles
     are present BEFORE YouTube renders anything — no flash.

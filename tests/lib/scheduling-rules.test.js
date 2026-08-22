@@ -1,5 +1,5 @@
-/*  ═══════════════════════════════════════════════════════
-    FocusGuard — Scheduling Rules Tests
+﻿/*  ═══════════════════════════════════════════════════════
+    MindfulBrowse — Scheduling Rules Tests
     Tests for time-based blocking and recurring sessions
     ═══════════════════════════════════════════════════════ */
 

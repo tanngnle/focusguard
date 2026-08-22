@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+﻿import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { resetChromeMock } from "../helpers/chrome-mock.js";
 import { mountPopupDom, fireDomContentLoaded, flushMicrotasks, ensureLocalStorage } from "../helpers/dom-fixture.js";
 
@@ -398,7 +398,7 @@ describe("popup.js — tabs", () => {
   it("persists the last active tab in localStorage and restores it on next open", async () => {
     await mountPopup({ enabled: true, sites: [] });
     document.getElementById("tab-btn-timer").click();
-    expect(window.localStorage.getItem("focusguard_active_tab")).toBe("tab-btn-timer");
+    expect(window.localStorage.getItem("MindfulBrowse_active_tab")).toBe("tab-btn-timer");
 
     // Re-open the popup (fresh module instance, same localStorage).
     await mountPopup({ enabled: true, sites: [] });
@@ -432,7 +432,7 @@ describe("popup.js — Timer tab", () => {
     expect(document.querySelectorAll("#popup-session-dots .popup-dot")).toHaveLength(3);
   });
 
-  it("Start writes focusguard_timer_state to storage.local with isRunning true", async () => {
+  it("Start writes MindfulBrowse_timer_state to storage.local with isRunning true", async () => {
     await mountPopup({
       enabled: true,
       sites: [],
@@ -442,8 +442,8 @@ describe("popup.js — Timer tab", () => {
     document.getElementById("timer-start-btn").click();
     await flushMicrotasks();
 
-    const data = await chrome.storage.local.get(["focusguard_timer_state"]);
-    const state = data.focusguard_timer_state;
+    const data = await chrome.storage.local.get(["MindfulBrowse_timer_state"]);
+    const state = data.MindfulBrowse_timer_state;
     expect(state).toBeTruthy();
     expect(state.isRunning).toBe(true);
     expect(state.phase).toBe("work");
@@ -468,27 +468,27 @@ describe("popup.js — Timer tab", () => {
     document.getElementById("timer-pause-btn").click();
     await flushMicrotasks();
 
-    let data = await chrome.storage.local.get(["focusguard_timer_state"]);
-    expect(data.focusguard_timer_state.isRunning).toBe(false);
-    expect(data.focusguard_timer_state.endsAt).toBeNull();
-    expect(data.focusguard_timer_state.remaining).toBe(25 * 60 - 2);
+    let data = await chrome.storage.local.get(["MindfulBrowse_timer_state"]);
+    expect(data.MindfulBrowse_timer_state.isRunning).toBe(false);
+    expect(data.MindfulBrowse_timer_state.endsAt).toBeNull();
+    expect(data.MindfulBrowse_timer_state.remaining).toBe(25 * 60 - 2);
     vi.useRealTimers();
 
     // Skip moves to the short break, paused, full duration.
     document.getElementById("timer-skip-btn").click();
     await flushMicrotasks();
-    data = await chrome.storage.local.get(["focusguard_timer_state"]);
-    expect(data.focusguard_timer_state.phase).toBe("shortBreak");
-    expect(data.focusguard_timer_state.isRunning).toBe(false);
-    expect(data.focusguard_timer_state.remaining).toBe(5 * 60);
+    data = await chrome.storage.local.get(["MindfulBrowse_timer_state"]);
+    expect(data.MindfulBrowse_timer_state.phase).toBe("shortBreak");
+    expect(data.MindfulBrowse_timer_state.isRunning).toBe(false);
+    expect(data.MindfulBrowse_timer_state.remaining).toBe(5 * 60);
 
     // Reset returns to round 1 work at the slider duration.
     document.getElementById("timer-reset-btn").click();
     await flushMicrotasks();
-    data = await chrome.storage.local.get(["focusguard_timer_state"]);
-    expect(data.focusguard_timer_state.phase).toBe("work");
-    expect(data.focusguard_timer_state.currentRound).toBe(1);
-    expect(data.focusguard_timer_state.totalTime).toBe(25 * 60);
+    data = await chrome.storage.local.get(["MindfulBrowse_timer_state"]);
+    expect(data.MindfulBrowse_timer_state.phase).toBe("work");
+    expect(data.MindfulBrowse_timer_state.currentRound).toBe(1);
+    expect(data.MindfulBrowse_timer_state.totalTime).toBe(25 * 60);
   });
 
   it("a storage.onChanged write from the blocked-page side updates the popup readout live", async () => {
@@ -497,7 +497,7 @@ describe("popup.js — Timer tab", () => {
 
     // Simulate the blocked page persisting a paused short-break state.
     await chrome.storage.local.set({
-      focusguard_timer_state: {
+      MindfulBrowse_timer_state: {
         phase: "shortBreak",
         currentRound: 2,
         totalRounds: 4,
@@ -526,7 +526,7 @@ describe("popup.js — Timer tab", () => {
     vi.useFakeTimers();
     const now = Date.now();
     await chrome.storage.local.set({
-      focusguard_timer_state: {
+      MindfulBrowse_timer_state: {
         phase: "work",
         currentRound: 1,
         totalRounds: 4,
@@ -554,7 +554,7 @@ describe("popup.js — Timer tab", () => {
     vi.useFakeTimers();
     const now = Date.now();
     await chrome.storage.local.set({
-      focusguard_timer_state: {
+      MindfulBrowse_timer_state: {
         phase: "work",
         currentRound: 1,
         totalRounds: 4,
@@ -577,9 +577,9 @@ describe("popup.js — Timer tab", () => {
     expect(document.getElementById("popup-phase-label").textContent).toBe("BREAK");
     expect(document.getElementById("popup-timer-digits").textContent).toBe("05:00");
 
-    const data = await chrome.storage.local.get(["focusguard_timer_state"]);
-    expect(data.focusguard_timer_state.phase).toBe("shortBreak");
-    expect(data.focusguard_timer_state.isRunning).toBe(false);
+    const data = await chrome.storage.local.get(["MindfulBrowse_timer_state"]);
+    expect(data.MindfulBrowse_timer_state.phase).toBe("shortBreak");
+    expect(data.MindfulBrowse_timer_state.isRunning).toBe(false);
   });
 
   it("restore advances one phase when a fresh running state's deadline already passed", async () => {
@@ -587,7 +587,7 @@ describe("popup.js — Timer tab", () => {
     await mountPopup(
       { enabled: true, sites: [] },
       {
-        focusguard_timer_state: {
+        MindfulBrowse_timer_state: {
           phase: "work",
           currentRound: 1,
           totalRounds: 4,
@@ -611,7 +611,7 @@ describe("popup.js — Timer tab", () => {
     await mountPopup(
       { enabled: true, sites: [] },
       {
-        focusguard_timer_state: {
+        MindfulBrowse_timer_state: {
           phase: "shortBreak",
           currentRound: 2,
           totalRounds: 4,
@@ -630,9 +630,9 @@ describe("popup.js — Timer tab", () => {
     expect(document.getElementById("popup-session-label").textContent).toBe("Session 1 of 4");
 
     // And not laundered back into storage with a fresh savedAt.
-    const data = await chrome.storage.local.get(["focusguard_timer_state"]);
-    expect(data.focusguard_timer_state.savedAt).toBe(staleSavedAt);
-    expect(data.focusguard_timer_state.phase).toBe("shortBreak");
+    const data = await chrome.storage.local.get(["MindfulBrowse_timer_state"]);
+    expect(data.MindfulBrowse_timer_state.savedAt).toBe(staleSavedAt);
+    expect(data.MindfulBrowse_timer_state.phase).toBe("shortBreak");
   });
 
   it("Open full-screen timer creates a tab at blocked/blocked.html", async () => {

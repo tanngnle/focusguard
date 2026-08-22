@@ -1,5 +1,5 @@
-/*  ═══════════════════════════════════════════════════════
-    FocusGuard — Stripping Rules Tests
+﻿/*  ═══════════════════════════════════════════════════════
+    MindfulBrowse — Stripping Rules Tests
     Tests for the stripping rule engine that determines
     which CSS selectors to apply for each platform.
     ═══════════════════════════════════════════════════════ */

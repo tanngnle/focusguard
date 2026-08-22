@@ -1,5 +1,5 @@
-/*  ═══════════════════════════════════════════════════════
-    FocusGuard — Pomodoro Timer (Blocked Page)
+﻿/*  ═══════════════════════════════════════════════════════
+    MindfulBrowse — Pomodoro Timer (Blocked Page)
     Full timer logic with persistence, audio, and phases
     ═══════════════════════════════════════════════════════ */
 
@@ -18,7 +18,7 @@ import {
 import { createFlipClock } from "../lib/flip-clock.js";
 
 // ── Constants ───────────────────────────────────────────
-const STORAGE_KEY = "focusguard_timer_state";
+const STORAGE_KEY = "MindfulBrowse_timer_state";
 const HEARTBEAT_MS = 10 * 1000; // persistence heartbeat while running
 
 const MOTIVATIONAL_QUOTES = [

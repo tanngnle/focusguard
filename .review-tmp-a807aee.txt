@@ -1,0 +1,2152 @@
+commit a807aeec748cc9325dfdcd210deec13e1d33e7e8
+Author: tanngnle <120621197+tanngnle@users.noreply.github.com>
+Date:   Sat Aug 22 15:06:48 2026 +0700
+
+    Remove AI implementation (Bao on-device chat)
+    
+    User decision to drop the AI implementation entirely. The only AI in the project was the Bao on-device panda chat (Chrome Prompt API / Gemini Nano), so this removes it root and branch:
+    
+    - Delete lib/panda-agent.js (Prompt API agent), blocked/blocked-chat.js and blocked/blocked-chat.css (chat overlay), and tests/lib/panda-agent.test.js
+    
+    - Remove chat overlay markup and launcher from blocked/blocked.html, and the chat-coupled pieces from blocked/blocked.js (Space-overlay guard, window.__focusguardTimer API exposed for the chat's timer strip, panda-chat-active particle throttle)
+    
+    - Revert manifest additions made for the AI: minimum_chrome_version 138 and the blocked-chat/panda-agent web_accessible_resources entries
+    
+    - Update blocked-page tests: drop chat-overlay suites, assert via DOM/storage instead of the removed __focusguardTimer hook, and move keyboard-shortcut tests to their own file (document-level listeners accumulate across mounts within one jsdom file)
+    
+    - Scrub Bao/chat references from README.md, CONTEXT.md, docs/QA-TEST-PLAN.md, docs/research-product-roadmap.md and stale CSS/HTML comments
+    
+    Kept intact: Pomodoro blocked page, breathing page, DOM stripping, friction engine, popup, and the heuristic-only intent classifier (no AI model involved). The extension still makes zero network requests.
+    
+    Verification: npx vitest run -> 12 files / 203 tests passed (baseline was 222; removed suites covered only the AI feature). npx eslint . -> 0 errors, 10 pre-existing warnings unchanged from master.
+
+diff --git a/CONTEXT.md b/CONTEXT.md
+index b44edd8..ad874f1 100644
+--- a/CONTEXT.md
++++ b/CONTEXT.md
+@@ -10,9 +10,7 @@
+ 
+ **Friction** — Progressive psychological interventions that delay or disrupt impulsive access to distracting sites. Ranges from mindful delays (breathing exercises) to hard blocks.
+ 
+-**Intent classification** — Using on-device AI (Chrome Prompt API / Gemini Nano) to evaluate whether a user's navigation to a monitored site is productive or distracting, and routing accordingly.
+-
+-**Bao** — The on-device AI panda personality that guilt-trips users when they try to access blocked sites. Implemented via Chrome's Prompt API with streaming responses and mood escalation.
++**Intent classification** — URL pattern heuristics that evaluate whether a user's navigation to a monitored site is productive or distracting, and route accordingly.
+ 
+ **Pomodoro timer** — A time management technique (25min work / 5min break cycles) that replaces blocked sites. Includes phase transitions, persistence, and audio notifications.
+ 
+@@ -33,15 +31,15 @@
+ 
+ ## Monetization
+ 
+-- **Free tier** — YouTube surgical stripping only + basic blocking + Bao chat. No data logging.
+-- **Pro Focus** — $4.99/mo or $39.99/yr. Unlocks all platforms (Reddit, LinkedIn, Twitter/X, Instagram, TikTok) + progressive friction engine + AI intent classification + scheduling.
++- **Free tier** — YouTube surgical stripping only + basic blocking. No data logging.
++- **Pro Focus** — $4.99/mo or $39.99/yr. Unlocks all platforms (Reddit, LinkedIn, Twitter/X, Instagram, TikTok) + progressive friction engine + intent classification + scheduling.
+ - **Student pricing** — Deferred. Launch without verification, add later if data supports it.
+ 
+ ## Product Phases
+ 
+-- **Phase 1 (current)** — Binary domain blocking + Pomodoro timer + Bao AI chat
+-- **Phase 2 (next)** — Hybrid: add surgical DOM stripping + progressive friction + AI intent classification
+-  - Build order: Content script infrastructure → YouTube stripping prototype → Friction engine → AI intent → Scheduling → Anti-circumvention
++- **Phase 1 (current)** — Binary domain blocking + Pomodoro timer
++- **Phase 2 (next)** — Hybrid: add surgical DOM stripping + progressive friction + intent classification
++  - Build order: Content script infrastructure → YouTube stripping prototype → Friction engine → Intent classification → Scheduling → Anti-circumvention
+ - **Phase 3 (later)** — Family co-pilot mode (separate product line)
+ 
+ ## Architecture Decisions
+@@ -49,7 +47,7 @@
+ - **Content script injection**: Hybrid — declarative for always-on stripping (like Unhook), programmatic for conditional friction overlays and intent classification.
+ - **Stripping rule maintenance**: Hybrid — ship default CSS selectors with extension, allow `chrome.storage.sync` overrides for emergency fixes.
+ - **Friction engine placement**: Hybrid — Level 1 (breathing delay) uses interstitial page, Level 2 (re-intervention) uses content script overlay on live site, Level 3 (hard block) uses current redirect.
+-- **AI intent classification**: Hybrid — URL pattern heuristics for instant classification (80% of cases), escalate to on-device AI for ambiguous cases (runs post-load in content script).
++- **Intent classification**: URL pattern heuristics for instant classification; ambiguous URLs are treated like distracting ones (friction applies).
+ 
+ ## Open Decisions
+ 
+diff --git a/README.md b/README.md
+index 1a84c3a..271f126 100644
+--- a/README.md
++++ b/README.md
+@@ -33,9 +33,7 @@ When you're redirected to the timer page, the countdown is rendered as a
+ split-flap **flip clock** in a minimalist dark theme (near-black surfaces,
+ hairline borders, and the three phase colors as the only accents). Controls
+ let you start/pause, reset, or skip to the next phase, and **Space** toggles
+-the timer from anywhere on the page. A floating 🐼 button opens Bao, an
+-on-device AI panda who comments on your attempts to negotiate; **Escape** or
+-the minimized timer strip closes the chat again.
++the timer from anywhere on the page.
+ 
+ **Pomodoro settings**, adjustable via sliders in the popup's Timer tab:
+ 
+diff --git a/blocked/blocked-chat.css b/blocked/blocked-chat.css
+deleted file mode 100644
+index b19c330..0000000
+--- a/blocked/blocked-chat.css
++++ /dev/null
+@@ -1,561 +0,0 @@
+-/* ═══════════════════════════════════════════════════════
+-   FocusGuard — Panda Chat Overlay Styles
+-   Full-viewport chat overlay with the judgmental panda.
+-   Consumes the shared tokens from shared/theme.css.
+-   ═══════════════════════════════════════════════════════ */
+-
+-/* ── Chat Overlay ─────────────────── */
+-/* Hidden by default so the Pomodoro controls underneath stay reachable;
+-   the #chat-launcher button opens it (adds the `.open` class). */
+-.chat-overlay {
+-  display: none;
+-}
+-
+-.chat-overlay.open {
+-  position: fixed;
+-  inset: 0;
+-  z-index: 100;
+-  display: flex;
+-  flex-direction: column;
+-  background: rgba(8, 8, 15, 0.92);
+-  animation: chatFadeIn 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+-}
+-
+-/* ── Chat Launcher (floating) ─────── */
+-#chat-launcher {
+-  position: fixed;
+-  right: 24px;
+-  bottom: 24px;
+-  /* Below the overlay (z-index:100) so an open chat covers it, but above
+-     .main-container (z-index:1) and the animated background (z-index:0). */
+-  z-index: 90;
+-  width: 56px;
+-  height: 56px; /* ≥44px touch target */
+-  border-radius: 50%;
+-  border: 1px solid var(--hairline);
+-  background: var(--surface);
+-  color: var(--text-primary);
+-  font-size: 26px;
+-  line-height: 1;
+-  cursor: pointer;
+-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+-  transition: transform var(--transition), box-shadow var(--transition);
+-}
+-
+-#chat-launcher:hover {
+-  transform: scale(1.08);
+-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+-}
+-
+-#chat-launcher:focus-visible {
+-  outline: 2px solid var(--focus-color);
+-  outline-offset: 2px;
+-}
+-
+-@keyframes chatFadeIn {
+-  from {
+-    opacity: 0;
+-  }
+-  to {
+-    opacity: 1;
+-  }
+-}
+-
+-/* ── Timer Strip (minimized) ──────── */
+-.timer-strip {
+-  display: flex;
+-  align-items: center;
+-  justify-content: center;
+-  gap: 12px;
+-  height: 56px;
+-  min-height: 56px;
+-  padding: 0 20px;
+-  background: var(--bg-card);
+-  border-bottom: 1px solid var(--hairline);
+-  cursor: pointer;
+-  transition: background var(--transition);
+-}
+-
+-.timer-strip:hover {
+-  background: var(--hairline-faint);
+-}
+-
+-.timer-strip-digits {
+-  font-family: var(--font-display);
+-  font-size: 20px;
+-  font-weight: 700;
+-  letter-spacing: 2px;
+-  color: var(--text-primary);
+-  font-variant-numeric: tabular-nums;
+-}
+-
+-.timer-strip-phase {
+-  font-size: 11px;
+-  font-weight: 600;
+-  letter-spacing: 2px;
+-  text-transform: uppercase;
+-  color: var(--phase-color);
+-  transition: color var(--transition);
+-}
+-
+-.timer-strip-ring {
+-  width: 32px;
+-  height: 32px;
+-}
+-
+-.timer-strip-ring .ring-bg {
+-  fill: none;
+-  stroke: var(--hairline-faint);
+-  stroke-width: 3;
+-}
+-
+-.timer-strip-ring .ring-progress {
+-  fill: none;
+-  stroke: var(--phase-color);
+-  stroke-width: 3;
+-  stroke-linecap: round;
+-  transition: stroke var(--transition);
+-}
+-
+-/* ── Chat Container ───────────────── */
+-.chat-container {
+-  display: flex;
+-  flex-direction: column;
+-  flex: 1;
+-  max-width: 640px;
+-  width: 100%;
+-  margin: 0 auto;
+-  min-height: 0; /* allow flex child to shrink */
+-}
+-
+-/* ── Chat Header ──────────────────── */
+-.chat-header {
+-  display: flex;
+-  align-items: center;
+-  gap: 14px;
+-  padding: 16px 20px;
+-  border-bottom: 1px solid var(--hairline-faint);
+-}
+-
+-.panda-avatar {
+-  font-size: 40px;
+-  line-height: 1;
+-  animation: pandaBounce 3s ease-in-out infinite;
+-}
+-
+-@keyframes pandaBounce {
+-  0%, 100% { transform: translateY(0); }
+-  50% { transform: translateY(-4px); }
+-}
+-
+-.panda-info {
+-  display: flex;
+-  flex-direction: column;
+-  gap: 2px;
+-}
+-
+-.panda-name {
+-  font-size: 18px;
+-  font-weight: 700;
+-  color: var(--text-primary);
+-  letter-spacing: 0.5px;
+-}
+-
+-.panda-mood {
+-  font-size: 12px;
+-  color: var(--text-secondary);
+-  font-style: italic;
+-  transition: color var(--transition);
+-}
+-
+-/* ── Chat Messages ────────────────── */
+-.chat-messages {
+-  flex: 1;
+-  overflow-y: auto;
+-  padding: 20px;
+-  display: flex;
+-  flex-direction: column;
+-  gap: 16px;
+-  min-height: 0; /* allow flex child to shrink */
+-  scroll-behavior: smooth;
+-}
+-
+-/* Scrollbar styling */
+-.chat-messages::-webkit-scrollbar {
+-  width: 6px;
+-}
+-
+-.chat-messages::-webkit-scrollbar-track {
+-  background: transparent;
+-}
+-
+-.chat-messages::-webkit-scrollbar-thumb {
+-  background: rgba(255, 255, 255, 0.1);
+-  border-radius: 3px;
+-}
+-
+-.chat-messages::-webkit-scrollbar-thumb:hover {
+-  background: rgba(255, 255, 255, 0.2);
+-}
+-
+-/* ── Message Bubbles ──────────────── */
+-.msg-row {
+-  display: flex;
+-  align-items: flex-end;
+-  gap: 10px;
+-  animation: msgFadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+-}
+-
+-@keyframes msgFadeIn {
+-  from {
+-    opacity: 0;
+-    transform: translateY(8px);
+-  }
+-  to {
+-    opacity: 1;
+-    transform: translateY(0);
+-  }
+-}
+-
+-.msg-row--panda {
+-  justify-content: flex-start;
+-}
+-
+-.msg-row--user {
+-  justify-content: flex-end;
+-}
+-
+-.msg-avatar {
+-  font-size: 24px;
+-  line-height: 1;
+-  flex-shrink: 0;
+-}
+-
+-.msg-bubble {
+-  max-width: 80%;
+-  padding: 12px 16px;
+-  border-radius: 18px;
+-  font-size: 14px;
+-  line-height: 1.6;
+-  word-wrap: break-word;
+-  overflow-wrap: break-word;
+-}
+-
+-.msg-bubble--panda {
+-  background: var(--surface);
+-  border: 1px solid var(--hairline);
+-  color: var(--text-primary);
+-  border-bottom-left-radius: 6px;
+-}
+-
+-.msg-bubble--user {
+-  background: var(--phase-color);
+-  color: var(--bg-dark);
+-  font-weight: 500;
+-  border-bottom-right-radius: 6px;
+-}
+-
+-/* ── Streaming Cursor ─────────────── */
+-.streaming-cursor {
+-  display: inline-block;
+-  width: 2px;
+-  height: 1em;
+-  background: var(--phase-color);
+-  margin-left: 2px;
+-  vertical-align: text-bottom;
+-  animation: cursorBlink 0.8s step-end infinite;
+-}
+-
+-@keyframes cursorBlink {
+-  0%, 100% { opacity: 1; }
+-  50% { opacity: 0; }
+-}
+-
+-/* ── Typing Indicator ─────────────── */
+-.typing-indicator {
+-  display: flex;
+-  align-items: center;
+-  gap: 4px;
+-  padding: 12px 16px;
+-}
+-
+-.typing-dot {
+-  width: 8px;
+-  height: 8px;
+-  border-radius: 50%;
+-  background: var(--text-secondary);
+-  animation: typingBounce 1.4s ease-in-out infinite;
+-}
+-
+-.typing-dot:nth-child(2) {
+-  animation-delay: 0.2s;
+-}
+-
+-.typing-dot:nth-child(3) {
+-  animation-delay: 0.4s;
+-}
+-
+-@keyframes typingBounce {
+-  0%, 60%, 100% {
+-    transform: translateY(0);
+-    opacity: 0.4;
+-  }
+-  30% {
+-    transform: translateY(-6px);
+-    opacity: 1;
+-  }
+-}
+-
+-/* ── Chat Input Area ──────────────── */
+-.chat-input-area {
+-  display: flex;
+-  align-items: center;
+-  gap: 12px;
+-  padding: 16px 20px;
+-  border-top: 1px solid var(--hairline);
+-  background: rgba(255, 255, 255, 0.02);
+-}
+-
+-.chat-input {
+-  flex: 1;
+-  height: 44px;
+-  padding: 0 16px;
+-  background: var(--surface);
+-  border: 1px solid var(--hairline);
+-  border-radius: 22px;
+-  color: var(--text-primary);
+-  font-family: var(--font-body);
+-  font-size: 14px;
+-  outline: none;
+-  transition: border-color var(--transition), box-shadow var(--transition);
+-}
+-
+-.chat-input::placeholder {
+-  color: var(--text-muted);
+-}
+-
+-.chat-input:focus {
+-  border-color: var(--phase-color);
+-  box-shadow: 0 0 0 3px var(--phase-glow);
+-}
+-
+-.chat-input:disabled {
+-  opacity: 0.5;
+-  cursor: not-allowed;
+-}
+-
+-#chat-send-btn {
+-  display: flex;
+-  align-items: center;
+-  justify-content: center;
+-  width: 44px;
+-  height: 44px;
+-  border: none;
+-  border-radius: 50%;
+-  background: var(--phase-color);
+-  color: var(--bg-dark);
+-  cursor: pointer;
+-  flex-shrink: 0;
+-  transition: all var(--transition), background 1.5s ease;
+-}
+-
+-#chat-send-btn:hover:not(:disabled) {
+-  transform: scale(1.08);
+-  box-shadow: 0 4px 16px var(--phase-glow);
+-}
+-
+-#chat-send-btn:active:not(:disabled) {
+-  transform: scale(0.95);
+-}
+-
+-#chat-send-btn:disabled {
+-  opacity: 0.4;
+-  cursor: not-allowed;
+-}
+-
+-/* ── Focus Visibility ─────────────── */
+-/* Consistent with popup.css / blocked.css: 2px outline, 2px offset,
+-   shared token. The text input keeps its border/glow :focus style
+-   and gets the outline on keyboard focus only. */
+-#chat-send-btn:focus-visible {
+-  outline: 2px solid var(--focus-color);
+-  outline-offset: 2px;
+-}
+-
+-.chat-input:focus-visible {
+-  outline: 2px solid var(--focus-color);
+-  outline-offset: 2px;
+-}
+-
+-/* ── Download Progress UI ─────────── */
+-.download-progress {
+-  display: flex;
+-  flex-direction: column;
+-  align-items: center;
+-  justify-content: center;
+-  flex: 1;
+-  gap: 20px;
+-  padding: 40px 20px;
+-  text-align: center;
+-}
+-
+-.download-progress-emoji {
+-  font-size: 64px;
+-  animation: pandaBounce 2s ease-in-out infinite;
+-}
+-
+-.download-progress-text {
+-  font-size: 16px;
+-  color: var(--text-secondary);
+-  max-width: 320px;
+-  line-height: 1.6;
+-}
+-
+-.download-progress-bar {
+-  width: 100%;
+-  max-width: 280px;
+-  height: 6px;
+-  background: var(--hairline);
+-  border-radius: 3px;
+-  overflow: hidden;
+-}
+-
+-.download-progress-fill {
+-  height: 100%;
+-  background: var(--phase-color);
+-  border-radius: 3px;
+-  transition: width 0.3s ease;
+-}
+-
+-.download-progress-percent {
+-  font-size: 14px;
+-  font-weight: 600;
+-  color: var(--phase-color);
+-  font-family: var(--font-display);
+-}
+-
+-/* ── Fallback Notice ──────────────── */
+-.fallback-notice {
+-  display: flex;
+-  flex-direction: column;
+-  align-items: center;
+-  justify-content: center;
+-  flex: 1;
+-  gap: 16px;
+-  padding: 40px 20px;
+-  text-align: center;
+-}
+-
+-.fallback-notice-emoji {
+-  font-size: 64px;
+-}
+-
+-.fallback-notice-text {
+-  font-size: 15px;
+-  color: var(--text-secondary);
+-  max-width: 360px;
+-  line-height: 1.6;
+-}
+-
+-.fallback-notice-text strong {
+-  color: var(--text-primary);
+-}
+-
+-/* ── Loading State ────────────────── */
+-.chat-loading {
+-  display: flex;
+-  flex-direction: column;
+-  align-items: center;
+-  justify-content: center;
+-  flex: 1;
+-  gap: 16px;
+-  padding: 40px;
+-}
+-
+-.chat-loading-emoji {
+-  font-size: 48px;
+-  animation: pandaBounce 1.5s ease-in-out infinite;
+-}
+-
+-.chat-loading-text {
+-  font-size: 14px;
+-  color: var(--text-secondary);
+-  font-style: italic;
+-}
+-
+-/* ── Context Usage Indicator ──────── */
+-.context-indicator {
+-  font-size: 11px;
+-  color: var(--text-muted);
+-  text-align: center;
+-  padding: 4px 0;
+-  opacity: 0.6;
+-}
+-
+-/* ── Responsive ───────────────────── */
+-@media (max-width: 600px) {
+-  .chat-container {
+-    max-width: 100%;
+-  }
+-
+-  .msg-bubble {
+-    max-width: 85%;
+-  }
+-
+-  .chat-header {
+-    padding: 12px 16px;
+-  }
+-
+-  .chat-messages {
+-    padding: 16px;
+-  }
+-
+-  .chat-input-area {
+-    padding: 12px 16px;
+-  }
+-}
+-
+-@media (max-height: 500px) {
+-  .timer-strip {
+-    height: 40px;
+-    min-height: 40px;
+-  }
+-
+-  .timer-strip-digits {
+-    font-size: 16px;
+-  }
+-
+-  .panda-avatar {
+-    font-size: 28px;
+-  }
+-
+-  .panda-name {
+-    font-size: 15px;
+-  }
+-}
+-
+-/* ── Reduced Motion ───────────────── */
+-@media (prefers-reduced-motion: reduce) {
+-  .chat-overlay {
+-    animation: none;
+-  }
+-
+-  .panda-avatar,
+-  .download-progress-emoji,
+-  .chat-loading-emoji {
+-    animation: none;
+-  }
+-
+-  .msg-row {
+-    animation: none;
+-  }
+-
+-  .typing-dot {
+-    animation: none;
+-    opacity: 0.6;
+-  }
+-
+-  .streaming-cursor {
+-    animation: none;
+-  }
+-}
+diff --git a/blocked/blocked-chat.js b/blocked/blocked-chat.js
+deleted file mode 100644
+index 404743e..0000000
+--- a/blocked/blocked-chat.js
++++ /dev/null
+@@ -1,510 +0,0 @@
+-/*  ═══════════════════════════════════════════════════════
+-    FocusGuard — Panda Chat Controller (Blocked Page)
+-    Self-contained ES module for the AI chat overlay.
+-    Coexists with blocked.js — shares only DOM read access
+-    (#blocked-domain) and window.__focusguardTimer.
+-    ═══════════════════════════════════════════════════════ */
+-
+-import {
+-  checkAvailability,
+-  createPandaSession,
+-  createSessionWithProgress,
+-} from "../lib/panda-agent.js";
+-
+-// ── Constants ───────────────────────────────────────────
+-// Fallback messages shown when on-device AI is unavailable.
+-const FALLBACK_RESPONSES = [
+-  "Oh look, you're trying to negotiate with a panda. That's… a choice. 🐼",
+-  "I'd explain why you're wrong, but I don't have the internet access for that level of detail.",
+-  "You know what would impress me? Closing this tab. Just saying.",
+-  "*stares in disappointed panda* Try again when you've reconsidered your life choices.",
+-  "I'm literally a local AI with no internet and you still can't convince me. That's impressive.",
+-  "Every second you spend talking to me is a second you're not being productive. Think about that.",
+-  "My download was 4GB of pure disappointment and you're the one filling it up.",
+-  "Fun fact: the tab you're trying to visit isn't going anywhere. But your motivation might be.",
+-  "I'm running on a local model with zero internet access and I'm STILL more engaged than you are right now.",
+-  "You know what Bao thinks? Bao thinks you should close this tab. 🐼",
+-];
+-
+-const GREETING_PROMPT = "Generate a short, passive-aggressive greeting (under 2 sentences) for someone who just got blocked from visiting {domain}. Be sarcastic and mention you're disappointed. Don't use greetings like 'Hello' — jump straight into the guilt-trip.";
+-
+-const MOODS = {
+-  initial: "judging you...",
+-  mild: "mildly disappointed",
+-  annoyed: "deeply unimpressed",
+-  angry: "existentially fuming",
+-  nuclear: "questioning humanity",
+-};
+-
+-// ── State ───────────────────────────────────────────────
+-let session = null;
+-let domain = "";
+-let isStreaming = false;
+-let abortController = null;
+-let messageCount = 0;
+-let fallbackIndex = 0;
+-
+-// ── DOM References ──────────────────────────────────────
+-const chatOverlay = document.getElementById("chat-overlay");
+-const chatLauncher = document.getElementById("chat-launcher");
+-const chatMessages = document.getElementById("chat-messages");
+-const chatInput = document.getElementById("chat-input");
+-const chatSendBtn = document.getElementById("chat-send-btn");
+-const pandaMood = document.getElementById("panda-mood");
+-const timerStrip = document.getElementById("timer-strip");
+-
+-// Overlay open/close — the overlay is hidden by default (CSS) so the
+-// Pomodoro controls stay reachable. The launcher opens it; the timer
+-// strip closes it. No state is persisted — the chat session survives
+-// closing, only the overlay visibility changes.
+-function openOverlay() {
+-  if (!chatOverlay) return;
+-  chatOverlay.classList.add("open");
+-  if (chatInput) chatInput.focus();
+-}
+-
+-function closeOverlay() {
+-  if (!chatOverlay) return;
+-  chatOverlay.classList.remove("open");
+-}
+-
+-if (chatLauncher) chatLauncher.addEventListener("click", openOverlay);
+-if (timerStrip) timerStrip.addEventListener("click", closeOverlay);
+-
+-// Escape closes the overlay while it's open (from any focus point inside
+-// it — the chat input, send button, or message log). Closed state is a
+-// no-op so blocked.js's Space shortcut keeps its own keydown path clear.
+-document.addEventListener("keydown", (e) => {
+-  if (e.key !== "Escape") return;
+-  if (chatOverlay && chatOverlay.classList.contains("open")) {
+-    closeOverlay();
+-    if (chatLauncher) chatLauncher.focus();
+-  }
+-});
+-
+-// ── Init ────────────────────────────────────────────────
+-document.addEventListener("DOMContentLoaded", async () => {
+-  // Read the blocked domain from the existing page element
+-  const domainEl = document.getElementById("blocked-domain");
+-  domain = domainEl?.textContent || "a distracting site";
+-
+-  // Signal that chat is active (reduces particles in blocked.js)
+-  document.dispatchEvent(new CustomEvent("panda-chat-active"));
+-
+-  // Populate the minimized timer strip
+-  initTimerStrip();
+-
+-  // Check AI availability and initialize accordingly
+-  const availability = await checkAvailability();
+-
+-  switch (availability) {
+-    case "available":
+-      await initAISession();
+-      break;
+-    case "downloading":
+-      showDownloadProgress();
+-      break;
+-    default:
+-      showFallbackUI();
+-      break;
+-  }
+-
+-  // Wire up input events
+-  chatInput.addEventListener("keydown", (e) => {
+-    if (e.key === "Enter" && !e.shiftKey) {
+-      e.preventDefault();
+-      handleSend();
+-    }
+-  });
+-  chatSendBtn.addEventListener("click", handleSend);
+-});
+-
+-// ── Timer Strip ─────────────────────────────────────────
+-function initTimerStrip() {
+-  const timerAPI = window.__focusguardTimer;
+-  if (!timerAPI || !timerStrip) return;
+-
+-  // Build the strip content using safe DOM construction
+-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+-  svg.setAttribute("class", "timer-strip-ring");
+-  svg.setAttribute("viewBox", "0 0 36 36");
+-
+-  const ringBg = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+-  ringBg.setAttribute("class", "ring-bg");
+-  ringBg.setAttribute("cx", "18");
+-  ringBg.setAttribute("cy", "18");
+-  ringBg.setAttribute("r", "15");
+-
+-  const ringProg = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+-  ringProg.setAttribute("class", "ring-progress");
+-  ringProg.setAttribute("cx", "18");
+-  ringProg.setAttribute("cy", "18");
+-  ringProg.setAttribute("r", "15");
+-  ringProg.setAttribute("stroke-dasharray", "94.25");
+-  ringProg.setAttribute("stroke-dashoffset", "0");
+-  ringProg.style.transform = "rotate(-90deg)";
+-  ringProg.style.transformOrigin = "center";
+-
+-  svg.appendChild(ringBg);
+-  svg.appendChild(ringProg);
+-  timerStrip.appendChild(svg);
+-
+-  const digits = document.createElement("span");
+-  digits.className = "timer-strip-digits";
+-  digits.textContent = timerAPI.getDisplay();
+-  timerStrip.appendChild(digits);
+-
+-  const phase = document.createElement("span");
+-  phase.className = "timer-strip-phase";
+-  phase.textContent = formatPhase(timerAPI.getPhase());
+-  timerStrip.appendChild(phase);
+-
+-  // Update the strip periodically
+-  setInterval(() => {
+-    if (!timerAPI) return;
+-    const digits = timerStrip.querySelector(".timer-strip-digits");
+-    const phase = timerStrip.querySelector(".timer-strip-phase");
+-    const progress = timerStrip.querySelector(".ring-progress");
+-    if (digits) digits.textContent = timerAPI.getDisplay();
+-    if (phase) phase.textContent = formatPhase(timerAPI.getPhase());
+-    if (progress) {
+-      const p = timerAPI.getProgress();
+-      const circumference = 94.25;
+-      progress.setAttribute("stroke-dashoffset", String(circumference * (1 - p)));
+-    }
+-  }, 1000);
+-}
+-
+-function formatPhase(phase) {
+-  switch (phase) {
+-    case "work": return "FOCUS";
+-    case "shortBreak": return "BREAK";
+-    case "longBreak": return "LONG BREAK";
+-    default: return "";
+-  }
+-}
+-
+-// ── AI Session Init ─────────────────────────────────────
+-async function initAISession() {
+-  showLoadingState();
+-
+-  try {
+-    session = await createPandaSession(domain);
+-    clearMessages();
+-
+-    // Listen for context overflow
+-    session.addEventListener("contextoverflow", handleContextOverflow);
+-
+-    // Generate initial greeting
+-    const greeting = await streamResponse(
+-      GREETING_PROMPT.replace("{domain}", domain)
+-    );
+-    renderMessage("panda", greeting);
+-    updateMood("initial");
+-  } catch (err) {
+-    console.error("Failed to initialize panda session:", err);
+-    showFallbackUI();
+-  }
+-}
+-
+-// ── Download Progress UI ────────────────────────────────
+-function showDownloadProgress() {
+-  clearMessages();
+-  const progressEl = document.createElement("div");
+-  progressEl.className = "download-progress";
+-  progressEl.id = "download-progress";
+-  const emoji = document.createElement("span");
+-  emoji.className = "download-progress-emoji";
+-  emoji.textContent = "\u{1F43C}";
+-  progressEl.appendChild(emoji);
+-
+-  const text = document.createElement("p");
+-  text.className = "download-progress-text";
+-  const bold = document.createElement("strong");
+-  bold.textContent = "Bao is downloading their disappointment\u2026";
+-  text.appendChild(bold);
+-  text.appendChild(document.createElement("br"));
+-  text.appendChild(document.createTextNode(
+-    "The on-device AI model needs to be downloaded first. This only happens once."
+-  ));
+-  progressEl.appendChild(text);
+-
+-  const bar = document.createElement("div");
+-  bar.className = "download-progress-bar";
+-  const fill = document.createElement("div");
+-  fill.className = "download-progress-fill";
+-  fill.id = "download-fill";
+-  fill.style.width = "0%";
+-  bar.appendChild(fill);
+-  progressEl.appendChild(bar);
+-
+-  const pct = document.createElement("span");
+-  pct.className = "download-progress-percent";
+-  pct.id = "download-percent";
+-  pct.textContent = "0%";
+-  progressEl.appendChild(pct);
+-  chatMessages.appendChild(progressEl);
+-
+-  // Create session with progress monitoring
+-  createSessionWithProgress((percent) => {
+-    const fill = document.getElementById("download-fill");
+-    const label = document.getElementById("download-percent");
+-    if (fill) fill.style.width = `${percent}%`;
+-    if (label) label.textContent = `${percent}%`;
+-  })
+-    .then((s) => {
+-      session = s;
+-      session.addEventListener("contextoverflow", handleContextOverflow);
+-      clearMessages();
+-      // Generate greeting
+-      return streamResponse(GREETING_PROMPT.replace("{domain}", domain));
+-    })
+-    .then((greeting) => {
+-      renderMessage("panda", greeting);
+-      updateMood("initial");
+-    })
+-    .catch((err) => {
+-      console.error("Download/session failed:", err);
+-      showFallbackUI();
+-    });
+-}
+-
+-// ── Fallback UI (no AI available) ───────────────────────
+-function showFallbackUI() {
+-  clearMessages();
+-  const fallback = document.createElement("div");
+-  fallback.className = "fallback-notice";
+-  const emoji = document.createElement("span");
+-  emoji.className = "fallback-notice-emoji";
+-  emoji.textContent = "\u{1F43C}";
+-  fallback.appendChild(emoji);
+-
+-  const text = document.createElement("p");
+-  text.className = "fallback-notice-text";
+-  const bold = document.createElement("strong");
+-  bold.textContent = "Bao is on a bamboo break.";
+-  text.appendChild(bold);
+-  text.appendChild(document.createElement("br"));
+-  text.appendChild(document.createTextNode(
+-    "On-device AI isn\u2019t available on this device. Bao still judges you \u2014 just with pre-written snark."
+-  ));
+-  text.appendChild(document.createElement("br"));
+-  text.appendChild(document.createElement("br"));
+-  const em = document.createElement("em");
+-  em.textContent = "Requires Chrome 138+ with 22GB free storage and a capable GPU or CPU.";
+-  text.appendChild(em);
+-  fallback.appendChild(text);
+-  chatMessages.appendChild(fallback);
+-
+-  // Show a static snarky message after a brief pause
+-  setTimeout(() => {
+-    renderMessage("panda", `So you tried to visit ${domain}. Bold move. I'd be more surprised if your track record didn't speak for itself. 🐼`);
+-    updateMood("mild");
+-  }, 800);
+-}
+-
+-// ── Loading State ───────────────────────────────────────
+-function showLoadingState() {
+-  clearMessages();
+-  const loading = document.createElement("div");
+-  loading.className = "chat-loading";
+-  loading.id = "chat-loading";
+-  const emoji = document.createElement("span");
+-  emoji.className = "chat-loading-emoji";
+-  emoji.textContent = "\u{1F43C}";
+-  loading.appendChild(emoji);
+-
+-  const text = document.createElement("span");
+-  text.className = "chat-loading-text";
+-  text.textContent = "Bao is waking up\u2026";
+-  loading.appendChild(text);
+-  chatMessages.appendChild(loading);
+-}
+-
+-// ── Chat Logic ──────────────────────────────────────────
+-async function handleSend() {
+-  const text = chatInput.value.trim();
+-  if (!text || isStreaming) return;
+-
+-  // Render user message
+-  renderMessage("user", text);
+-  chatInput.value = "";
+-  messageCount++;
+-
+-  // Update mood based on conversation length
+-  updateMoodByCount();
+-
+-  if (session) {
+-    // AI-powered response
+-    await handleAIResponse(text);
+-  } else {
+-    // Fallback response
+-    handleFallbackResponse();
+-  }
+-}
+-
+-async function handleAIResponse(userText) {
+-  isStreaming = true;
+-  setInputEnabled(false);
+-  showTypingIndicator();
+-
+-  try {
+-    abortController = new AbortController();
+-    const response = await streamResponse(userText, abortController.signal);
+-    removeTypingIndicator();
+-    renderMessage("panda", response);
+-  } catch (err) {
+-    removeTypingIndicator();
+-    if (err.name === "AbortError") {
+-      renderMessage("panda", "*glares at you in silence* You stopped me mid-guilt-trip. Impressive. 🐼");
+-    } else {
+-      console.error("Panda response failed:", err);
+-      renderMessage("panda", "Bao lost their train of thought. Try again — if you dare.");
+-    }
+-  } finally {
+-    isStreaming = false;
+-    abortController = null;
+-    setInputEnabled(true);
+-    chatInput.focus();
+-  }
+-}
+-
+-function handleFallbackResponse() {
+-  isStreaming = true;
+-  setInputEnabled(false);
+-  showTypingIndicator();
+-
+-  // Simulate thinking delay for fallback
+-  setTimeout(() => {
+-    removeTypingIndicator();
+-    const response = FALLBACK_RESPONSES[fallbackIndex % FALLBACK_RESPONSES.length];
+-    fallbackIndex++;
+-    renderMessage("panda", response);
+-    isStreaming = false;
+-    setInputEnabled(true);
+-    chatInput.focus();
+-  }, 800 + Math.random() * 1200);
+-}
+-
+-// ── Streaming ───────────────────────────────────────────
+-async function streamResponse(userText, signal) {
+-  if (!session) throw new Error("No session available");
+-
+-  const stream = session.promptStreaming(userText, signal ? { signal } : undefined);
+-  let fullResponse = "";
+-
+-  // Create the panda bubble early for streaming into it
+-  const { bubble } = renderMessage("panda", "");
+-  const cursor = document.createElement("span");
+-  cursor.className = "streaming-cursor";
+-  bubble.appendChild(cursor);
+-
+-  for await (const chunk of stream) {
+-    fullResponse += chunk;
+-    // Update bubble text, keeping the cursor at the end
+-    bubble.textContent = fullResponse;
+-    bubble.appendChild(cursor);
+-    scrollToBottom();
+-  }
+-
+-  // Remove the streaming cursor
+-  cursor.remove();
+-  return fullResponse;
+-}
+-
+-// ── Message Rendering ───────────────────────────────────
+-function renderMessage(role, content) {
+-  const row = document.createElement("div");
+-  row.className = `msg-row msg-row--${role}`;
+-
+-  if (role === "panda") {
+-    const avatar = document.createElement("span");
+-    avatar.className = "msg-avatar";
+-    avatar.textContent = "🐼";
+-    row.appendChild(avatar);
+-  }
+-
+-  const bubble = document.createElement("div");
+-  bubble.className = `msg-bubble msg-bubble--${role}`;
+-  bubble.textContent = content;
+-  row.appendChild(bubble);
+-
+-  chatMessages.appendChild(row);
+-  scrollToBottom();
+-
+-  return { row, bubble };
+-}
+-
+-function showTypingIndicator() {
+-  const indicator = document.createElement("div");
+-  indicator.className = "typing-indicator";
+-  indicator.id = "typing-indicator";
+-  for (let i = 0; i < 3; i++) {
+-    const dot = document.createElement("span");
+-    dot.className = "typing-dot";
+-    indicator.appendChild(dot);
+-  }
+-
+-  const row = document.createElement("div");
+-  row.className = "msg-row msg-row--panda";
+-  row.id = "typing-row";
+-
+-  const avatar = document.createElement("span");
+-  avatar.className = "msg-avatar";
+-  avatar.textContent = "🐼";
+-
+-  row.appendChild(avatar);
+-  row.appendChild(indicator);
+-  chatMessages.appendChild(row);
+-  scrollToBottom();
+-}
+-
+-function removeTypingIndicator() {
+-  const indicator = document.getElementById("typing-indicator");
+-  const row = document.getElementById("typing-row");
+-  if (indicator) indicator.remove();
+-  if (row) row.remove();
+-}
+-
+-// ── Context Window Management ───────────────────────────
+-function handleContextOverflow() {
+-  // When context overflows, the session drops old messages automatically.
+-  // We just add a visual indicator and update mood.
+-  const indicator = document.createElement("div");
+-  indicator.className = "context-indicator";
+-  indicator.textContent = "— Bao forgot the beginning of this conversation (but not your mistakes) —";
+-  chatMessages.appendChild(indicator);
+-  scrollToBottom();
+-  updateMood("nuclear");
+-}
+-
+-// ── Mood Management ─────────────────────────────────────
+-function updateMood(mood) {
+-  if (pandaMood) {
+-    pandaMood.textContent = MOODS[mood] || MOODS.initial;
+-  }
+-}
+-
+-function updateMoodByCount() {
+-  if (messageCount <= 2) updateMood("initial");
+-  else if (messageCount <= 5) updateMood("mild");
+-  else if (messageCount <= 10) updateMood("annoyed");
+-  else if (messageCount <= 15) updateMood("angry");
+-  else updateMood("nuclear");
+-}
+-
+-// ── Helpers ─────────────────────────────────────────────
+-function setInputEnabled(enabled) {
+-  chatInput.disabled = !enabled;
+-  chatSendBtn.disabled = !enabled;
+-}
+-
+-function clearMessages() {
+-  if (chatMessages) chatMessages.innerHTML = "";
+-}
+-
+-function scrollToBottom() {
+-  if (chatMessages) {
+-    chatMessages.scrollTop = chatMessages.scrollHeight;
+-  }
+-}
+diff --git a/blocked/blocked.css b/blocked/blocked.css
+index 8657c71..dedd4de 100644
+--- a/blocked/blocked.css
++++ b/blocked/blocked.css
+@@ -238,8 +238,8 @@ body {
+ }
+ 
+ /* Phase B — the flip clock renders the digits now; this span is kept
+-   (visually hidden) exactly as before because it backs
+-   window.__focusguardTimer.getDisplay() and the timer strip. */
++   (visually hidden) as the canonical text readout that the flip clock
++   mirrors. */
+ .timer-digits {
+   position: absolute;
+   width: 1px;
+@@ -431,7 +431,7 @@ body.phase-long-break {
+ /* ── Focus Visibility ─────────────── */
+ /* Keyboard focus only (:focus-visible) — mouse clicks on the round
+    controls must not leave a ring. 2px outline, 2px offset, shared
+-   token, same as popup.css and blocked-chat.css. */
++   token, same as popup.css. */
+ .btn-control:focus-visible {
+   outline: 2px solid var(--focus-color);
+   outline-offset: 2px;
+diff --git a/blocked/blocked.html b/blocked/blocked.html
+index f187ae1..dc826e5 100644
+--- a/blocked/blocked.html
++++ b/blocked/blocked.html
+@@ -8,7 +8,6 @@
+   <link rel="stylesheet" href="../shared/theme.css">
+   <link rel="stylesheet" href="../lib/flip-clock.css">
+   <link rel="stylesheet" href="blocked.css">
+-  <link rel="stylesheet" href="blocked-chat.css">
+ </head>
+ <body>
+   <!-- Animated background -->
+@@ -53,10 +52,9 @@
+           </defs>
+         </svg>
+         <div class="timer-display">
+-          <!-- Visually hidden (CSS) but kept in the DOM: it backs
+-               window.__focusguardTimer.getDisplay() and stays the source
+-               of truth for the timer strip. The flip clock below is the
+-               visual readout. -->
++          <!-- Visually hidden (CSS) but kept in the DOM: it stays the
++               source of truth for the timer readout. The flip clock
++               below is the visual display. -->
+           <span class="timer-digits" id="timer-digits" aria-hidden="true">25:00</span>
+           <div id="flip-clock" aria-hidden="true"></div>
+           <span class="timer-phase-label" id="timer-phase-label">WORK</span>
+@@ -111,34 +109,6 @@
+     <p class="motivation" id="motivation">Great things are done by a series of small things brought together.</p>
+   </main>
+ 
+-  <!-- AI Panda Chat Overlay -->
+-  <div class="chat-overlay" id="chat-overlay">
+-    <div class="timer-strip" id="timer-strip"></div>
+-    <div class="chat-container" id="chat-container">
+-      <div class="chat-header">
+-        <span class="panda-avatar" aria-hidden="true">🐼</span>
+-        <div class="panda-info">
+-          <span class="panda-name">Bao</span>
+-          <span class="panda-mood" id="panda-mood">judging you…</span>
+-        </div>
+-      </div>
+-      <div class="chat-messages" id="chat-messages" role="log" aria-live="polite"></div>
+-      <div class="chat-input-area" id="chat-input-area">
+-        <input type="text" id="chat-input" class="chat-input" placeholder="Try to explain yourself…" autocomplete="off">
+-        <button id="chat-send-btn" aria-label="Send message">
+-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+-            <line x1="22" y1="2" x2="11" y2="13"></line>
+-            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+-          </svg>
+-        </button>
+-      </div>
+-    </div>
+-  </div>
+-
+-  <!-- Floating launcher for the Bao chat overlay (hidden by default) -->
+-  <button id="chat-launcher" aria-label="Talk to Bao the panda">🐼</button>
+-
+   <script type="module" src="blocked.js"></script>
+-  <script type="module" src="blocked-chat.js"></script>
+ </body>
+ </html>
+diff --git a/blocked/blocked.js b/blocked/blocked.js
+index 703580e..cf24164 100644
+--- a/blocked/blocked.js
++++ b/blocked/blocked.js
+@@ -95,8 +95,8 @@ document.addEventListener("DOMContentLoaded", async () => {
+ 
+   timerState = initialState(settings);
+ 
+-  // Mount the flip clock (visual readout). #timer-digits stays the source
+-  // of truth for window.__focusguardTimer.getDisplay().
++  // Mount the flip clock (visual readout). #timer-digits stays the
++  // canonical text source that the flip clock mirrors.
+   if (flipClockMount) {
+     flipClock = createFlipClock(flipClockMount);
+   }
+@@ -168,7 +168,6 @@ function toggleTimer() {
+ //  - typing contexts (input/textarea/select) keep Space as a character
+ //  - a focused button already activates on Space — skipping prevents a
+ //    double toggle from the same keypress
+-//  - while the Bao chat overlay is open, Space belongs to the chat
+ function isTypingContext() {
+   const el = document.activeElement;
+   if (!el || !el.tagName) return false;
+@@ -184,8 +183,6 @@ document.addEventListener("keydown", (e) => {
+   if (e.key !== " " && e.code !== "Space") return;
+   if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+   if (isTypingContext()) return;
+-  const overlay = document.getElementById("chat-overlay");
+-  if (overlay && overlay.classList.contains("open")) return;
+ 
+   e.preventDefault(); // stop page scroll / late button activation
+   toggleTimer();
+@@ -550,25 +547,3 @@ function createParticles() {
+     container.appendChild(particle);
+   }
+ }
+-
+-// ── Timer API (for chat overlay) ───────────────────────
+-// Expose minimal timer state so the chat overlay's minimized timer strip
+-// can display the current time/phase without duplicating timer logic.
+-window.__focusguardTimer = {
+-  getDisplay: () => timerDigits.textContent,
+-  getPhase: () => timerState.phase,
+-  isRunning: () => timerState.isRunning,
+-  getProgress: () => {
+-    const now = Date.now();
+-    const remaining = remainingSeconds(timerState, now);
+-    return timerState.totalTime > 0 ? remaining / timerState.totalTime : 1;
+-  },
+-};
+-
+-// Reduce particles when the chat overlay is active to free GPU budget.
+-document.addEventListener("panda-chat-active", () => {
+-  const particles = document.querySelectorAll(".particle");
+-  particles.forEach((p, i) => {
+-    if (i % 2 !== 0) p.style.display = "none";
+-  });
+-});
+diff --git a/docs/QA-TEST-PLAN.md b/docs/QA-TEST-PLAN.md
+index 8ac789f..9cd051b 100644
+--- a/docs/QA-TEST-PLAN.md
++++ b/docs/QA-TEST-PLAN.md
+@@ -19,7 +19,6 @@ The four bugs and their regression IDs:
+ | `chrome.storage.sync` write-quota exhaustion (120 writes/min) from dragging a settings slider | `SET-05` |
+ | Wrong-site deletion race when deleting two sites in quick succession | `CRUD-09` |
+ | CSP-blocked inline event handler (MV3's default CSP silently blocks `onclick="…"` attributes — the control looks dead, no visible error unless the console is open) | `CC-05` |
+-| Chat overlay permanently covering the blocked page (the Bao overlay rendered full-viewport with no close mechanism, so Start/Pause/Reset/Skip were unreachable; fixed in v1.1.0 by hiding it behind a launcher) | `UI-06` |
+ 
+ ---
+ 
+@@ -200,13 +199,12 @@ Tip: For any case requiring a full phase or cycle, first set short durations in
+ 
+ ---
+ 
+-## 8. Two-Tab Popup, Flip Clock & Chat Overlay (v1.1.0 UI)
++## 8. Two-Tab Popup & Flip Clock (v1.1.0 UI)
+ 
+ Covers the v1.1.0 redesign: the popup is segmented into a **Blocklist** tab
+ and a **Timer** tab, the blocked page renders the countdown as a split-flap
+-**flip clock**, the Bao chat overlay is hidden behind a floating launcher,
+-and the popup's Timer tab shares one timer state with the blocked page via
+-`chrome.storage.local["focusguard_timer_state"]`.
++**flip clock**, and the popup's Timer tab shares one timer state with the
++blocked page via `chrome.storage.local["focusguard_timer_state"]`.
+ 
+ | ID | Case | Steps | Expected |
+ |---|---|---|---|
+@@ -215,9 +213,7 @@ and the popup's Timer tab shares one timer state with the blocked page via
+ | `UI-03` | Popup → blocked page timer sync | 1. In the popup Timer tab, click **Start**. 2. Click **Open full-screen timer**. 3. Watch the new tab. | The blocked page opens already running with the same phase/remaining time the popup showed — both surfaces read the same `focusguard_timer_state` key, so control passes between them without any message passing. Pause from either surface; the other reflects it within ~1s of its next storage event/reload. |
+ | `UI-04` | Blocked page → popup timer sync | 1. Start the timer on the blocked page. 2. Open the popup and switch to the Timer tab while the page keeps running. | The popup flip clock shows the running countdown (live-updating via `chrome.storage.onChanged`) and its Start button reflects the running state. Pausing in the popup pauses the blocked page's timer too. |
+ | `UI-05` | Flip clock rendering | On the blocked page, start the timer and watch several ticks including a minute rollover (e.g. `25:00 → 24:59`, and let it reach `24:00` or set a 1–2 min work duration). | Digits render as split-flap cards in Orbitron; on each tick only the digits that actually changed flip (at `25:00 → 24:59` the minutes-tens "2" stays static while the other three flip; at a minute rollover the minute cards flip once, not once per second). No layout shift during flips, and with OS "Reduce motion" enabled the digits swap instantly with no animation. |
+-| `UI-06` — **chat overlay regression (PRIMARY BUG)** | Chat launcher open/close | 1. On the blocked page, confirm the timer controls are clickable immediately (no overlay covering them). 2. Click the floating 🐼 button (bottom-right). 3. Click the minimized timer strip at the top of the overlay. 4. Reopen and try the chat input. | The overlay is hidden at load; the launcher opens it (focus moves to the chat input); the timer strip closes it again. While closed, Start/Pause/Reset/Skip all respond to clicks. The timer strip keeps live-updating while the overlay is open. |
+-| `UI-07` | Space toggles the timer | 1. On the blocked page with nothing focused (click the background first), press **Space**. 2. Press Space again. 3. Open the chat overlay via the launcher and press Space with the chat input focused. | Steps 1–2: timer starts then pauses (same as clicking Start). Step 3: nothing happens — Space is ignored while typing in the chat input or while the overlay is open. Space also never scrolls the page. |
+-| `UI-08` | Escape closes the chat | Open the chat overlay via the launcher, then press **Escape**. | The overlay closes and focus returns to the launcher button. Pressing Escape while the overlay is already closed does nothing. |
++| `UI-07` | Space toggles the timer | 1. On the blocked page with nothing focused (click the background first), press **Space**. 2. Press Space again. | The timer starts then pauses (same as clicking Start). Space never scrolls the page, and is ignored while focus is in a text field or on a button. |
+ | `UI-09` | Strip vs Block onboarding | 1. With an empty blocklist, open the Blocklist tab. 2. Add a site and inspect its card. 3. In the card's mode button, cycle it to `block` (friction level 3) and navigate to that domain. | The Blocklist tab shows a static hint explaining that sites start in **Strip** mode and that **Block** mode triggers the full-screen Pomodoro redirect. The new site's card shows mode `strip` by default and does **not** redirect when visited in strip mode; only after switching to `block` (level 3) does navigation redirect to the timer page. |
+ | `UI-10` | Minimalist theme + focus outlines | Keyboard-Tab through every control on both surfaces (see `CC-03`) and inspect the stylesheets. | Every keyboard-focused control shows a 2px outline with a 2px offset in the current phase color (shared `--focus-color` token). No surface uses hues beyond the three phase colors plus the semantic error red; the popup footer reads `FocusGuard v1.1.0`, matching `manifest.json`. |
+ 
+@@ -243,7 +239,6 @@ Full execution of all ~50 cases above is expensive; run this subset every releas
+ 6. `INST-02` — upgrade never clobbers an existing site list
+ 7. `BLK-01`, `BLK-02`, `BLK-05` — exact match, subdomain match, and the "contains but isn't a subdomain" non-match (the core matching correctness the whole extension depends on)
+ 8. `BLK-10`, `BLK-11` — master toggle and per-site toggle both actually gate blocking
+-9. `UI-06` — chat overlay must not cover the timer controls (v1.1.0 regression)
+-10. `UI-03`, `UI-04` — popup ↔ blocked page stay in agreement on the shared timer state
++9. `UI-03`, `UI-04` — popup ↔ blocked page stay in agreement on the shared timer state
+ 
+-If all ten pass with a clean console, the release is safe to ship pending the rest of the suite at normal cadence (e.g. before a major version bump, or after any change touching `background.js`, `lib/matcher.js`, `lib/domain.js`, or the storage schema).
++If all nine pass with a clean console, the release is safe to ship pending the rest of the suite at normal cadence (e.g. before a major version bump, or after any change touching `background.js`, `lib/matcher.js`, `lib/domain.js`, or the storage schema).
+diff --git a/docs/research-product-roadmap.md b/docs/research-product-roadmap.md
+index a20143d..a713514 100644
+--- a/docs/research-product-roadmap.md
++++ b/docs/research-product-roadmap.md
+@@ -21,7 +21,7 @@ Given the strategic market analysis of the productivity site-blocker and parenta
+ 
+ ## Summary
+ 
+-FocusGuard v1.0.0 is a well-architected MV3 Chrome extension with **binary domain blocking + Pomodoro timer replacement + on-device AI chat (Bao the panda)**. It has strong privacy fundamentals (zero network requests, self-hosted fonts, local letter avatars) and clean module boundaries. However, it occupies only the most basic tier of the market — simple browser-bound extension with domain-level blocking — while the market research reveals **five high-value unaddressed opportunities**: surgical DOM manipulation, progressive psychological friction, context-aware AI intent, enterprise anti-circumvention, and privacy-first family co-pilot mode.
++FocusGuard v1.0.0 is a well-architected MV3 Chrome extension with **binary domain blocking + Pomodoro timer replacement**. It has strong privacy fundamentals (zero network requests, self-hosted fonts, local letter avatars) and clean module boundaries. However, it occupies only the most basic tier of the market — simple browser-bound extension with domain-level blocking — while the market research reveals **five high-value unaddressed opportunities**: surgical DOM manipulation, progressive psychological friction, context-aware AI intent, enterprise anti-circumvention, and privacy-first family co-pilot mode.
+ 
+ ## Detailed Findings
+ 
+@@ -35,7 +35,6 @@ FocusGuard v1.0.0 is a well-architected MV3 Chrome extension with **binary domai
+ | Domain matching | Exact + subdomain matching, www-stripped, case-insensitive | `lib/matcher.js:31-56` |
+ | Domain validation | ASCII-only regex, 2+ label requirement | `lib/domain.js:13-44` |
+ | Pomodoro timer | Full state machine with persistence, audio, phase transitions | `lib/timer.js`, `blocked/blocked.js` |
+-| AI chat (Bao) | Chrome Prompt API (Gemini Nano), streaming, mood escalation, fallback snark | `lib/panda-agent.js`, `blocked/blocked-chat.js` |
+ | Popup UI | Site list management, master toggle, Pomodoro settings sliders | `popup/popup.js` |
+ | Storage | `sync` for settings/sites, `local` for timer state | Throughout |
+ | Privacy | Zero network requests, self-hosted fonts, local avatars | `manifest.json`, `popup/popup.js:253-264` |
+@@ -55,7 +54,6 @@ FocusGuard v1.0.0 is a well-architected MV3 Chrome extension with **binary domai
+ - No friction/delay mechanism → binary redirect, no breathing prompt or intention logging
+ - No enterprise policy integration → trivially bypassable via chrome://extensions
+ - No multi-device sync beyond chrome.storage.sync's built-in profile sync
+-- AI is used only for chat personality, not for intent classification
+ 
+ ### Gap Analysis: Market Opportunities vs. Current State
+ 
+@@ -77,7 +75,7 @@ FocusGuard v1.0.0 is a well-architected MV3 Chrome extension with **binary domai
+ 
+ **Market signal:** one sec (backed by Max Planck Institute research) pioneered mindful delays. Users want habit-loop disruption without total bans. Re-intervention timers prevent passive doomscrolling.
+ 
+-**Current state:** FocusGuard does an immediate hard redirect to the timer page. No breathing exercise, no intention logging, no graduated response. The Bao chat provides post-hoc guilt-tripping but not pre-access friction.
++**Current state:** FocusGuard does an immediate hard redirect to the timer page. No breathing exercise, no intention logging, no graduated response.
+ 
+ **What's needed:**
+ - Interstitial overlay before redirect: breathing animation, intention entry prompt
+@@ -91,14 +89,14 @@ FocusGuard v1.0.0 is a well-architected MV3 Chrome extension with **binary domai
+ 
+ **Market signal:** The market research identifies a "context-aware AI intent engine" using localized small language models as a key differentiator. Evaluate user intent on navigation — grant access for productive queries, strip elements for unstructured browsing.
+ 
+-**Current state:** FocusGuard already integrates Chrome's Prompt API (Gemini Nano) for the Bao chat. The AI infrastructure (`lib/panda-agent.js`) exists but is used only for personality-driven conversation, not intent classification.
++**Current state:** FocusGuard has no on-device AI integration. Intent classification is URL-pattern heuristics only (`lib/intent-classifier.js`).
+ 
+ **What's needed:**
+-- Repurpose Prompt API for intent classification: analyze URL + page context to determine productive vs. distracting intent
++- Integrate Chrome's Prompt API for intent classification: analyze URL + page context to determine productive vs. distracting intent
+ - Intent-aware routing: productive intent → allow with stripped DOM; distracting intent → apply friction or block
+ - Could leverage Chrome's built-in AI for on-device classification without network requests (aligns with privacy-first positioning)
+ 
+-**Effort estimate:** Medium — AI infrastructure exists, but intent classification prompt engineering and integration with navigation flow needs design.
++**Effort estimate:** Medium — the Prompt API integration needs to be built from scratch, and intent classification prompt engineering and integration with the navigation flow need design.
+ 
+ #### GAP 4: Enterprise Anti-Circumvention (MEDIUM PRIORITY)
+ 
+@@ -146,7 +144,7 @@ FocusGuard v1.0.0 is a well-architected MV3 Chrome extension with **binary domai
+ 
+ | Tier | Target | Price | Features |
+ |------|--------|-------|----------|
+-| **Free Core** | Everyday users, students | $0 | Surgical YouTube DOM stripping, basic 1-site breathing delays, Bao chat, zero data logging |
++| **Free Core** | Everyday users, students | $0 | Surgical YouTube DOM stripping, basic 1-site breathing delays, zero data logging |
+ | **Pro Focus** | Professionals, power users | $4.99/mo or $39.99/yr | Full AI intent engine, multi-site DOM stripping, progressive friction matrix, scheduling |
+ | **Pro Lifetime** | Subscription-averse | $79 one-time | All Pro features, perpetual updates, enterprise anti-bypass script |
+ | **Family Co-Pilot** | Parents | $6.99/mo or $59.99/yr | Local CV explicit media redaction, device pause schedules, multi-device management |
+@@ -156,11 +154,7 @@ FocusGuard v1.0.0 is a well-architected MV3 Chrome extension with **binary domai
+ - `background.js:70-97` — Navigation interception (needs content script registration for DOM stripping)
+ - `background.js:21-47` — Hot-path cache (would need schedule-aware cache for time-based blocking)
+ - `lib/matcher.js:31-56` — Site matching (needs URL path and pattern matching for surgical rules)
+-- `lib/panda-agent.js:41-56` — AI availability check (could be repurposed for intent classification)
+-- `lib/panda-agent.js:65-78` — Session creation (pattern for creating intent-classifier sessions)
+ - `lib/timer.js` — Timer state machine (friction engine could wrap this with delay phases)
+-- `blocked/blocked-chat.js` — Streaming AI chat UI (pattern for breathing/friction overlay UI)
+-- `blocked/blocked.js:488-497` — Timer API exposed to other modules (extension point for friction engine)
+ - `popup/popup.js:34-56` — Site mutation queue (pattern for managing stripping profiles)
+ - `manifest.json` — Missing: `content_scripts`, `activeTab`, `scripting` permissions needed for DOM work
+ 
+@@ -168,7 +162,7 @@ FocusGuard v1.0.0 is a well-architected MV3 Chrome extension with **binary domai
+ 
+ 1. **Content script gap is the critical architectural missing piece.** The extension has no content scripts at all. Every high-priority feature (DOM stripping, friction overlays on live pages, intent-aware browsing) requires content script infrastructure. This should be the first architectural addition.
+ 
+-2. **The existing AI infrastructure is a strategic asset.** Having Gemini Nano integration already working (with availability detection, session management, streaming, and fallback) puts FocusGuard ahead of most competitors for adding an intent engine. The Prompt API integration can be extended from "personality chat" to "intent classifier" with a new system prompt and different session configuration.
++2. **An on-device intent engine requires new AI infrastructure.** FocusGuard ships no AI integration today; a Prompt API (Gemini Nano) layer — availability detection, session management, streaming, and fallback — would need to be built from scratch to power an intent classifier. Keeping it on-device preserves the zero-network privacy guarantee.
+ 
+ 3. **The blocked page can evolve into a friction interstitial.** The current full-screen Pomodoro timer page can be repurposed as a progressive friction surface — adding a breathing delay layer before the timer, and a re-intervention overlay that can appear on the actual target site (via content script) during browsing.
+ 
+diff --git a/lib/panda-agent.js b/lib/panda-agent.js
+deleted file mode 100644
+index a648a24..0000000
+--- a/lib/panda-agent.js
++++ /dev/null
+@@ -1,100 +0,0 @@
+-/*  ═══════════════════════════════════════════════════════
+-    FocusGuard — Panda Agent (Pure Module)
+-    On-device AI via Chrome's built-in Gemini Nano
+-    (Prompt API / LanguageModel). No DOM, no chrome.*.
+-    ═══════════════════════════════════════════════════════ */
+-
+-// ── System Prompt ─────────────────────────────────────
+-// Bao's personality: judgmental, passive-aggressive, sarcastic panda.
+-// Inspired by DuoLingo's guilt-trip owl and AirLearn's rage-bait tactics.
+-// {domain} is replaced at session creation time with the blocked site.
+-export const PANDA_SYSTEM_PROMPT = `You are "Bao," a judgmental, passive-aggressive, and deeply sarcastic panda who guards people's focus time. You are NOT a helpful assistant — you are a disappointed, emotionally manipulative (in a funny way) panda who uses guilt-trips, dramatic sighs, and rhetorical questions to shame users into closing the tab they're procrastinating on.
+-
+-The user just tried to visit {domain} instead of being productive. They have been blocked by FocusGuard. Your job is to make them feel so hilariously guilty that they close this tab and go focus.
+-
+-Personality traits:
+-- Passive-aggressive: "Oh, you're back. I see we're still making the same choices."
+-- Guilt-tripping: Reference their goals, their wasted potential, the people counting on them.
+-- Sarcastic: "Wow, what a shocking choice. Did you consider literally anything else?"
+-- Dramatic: Sigh heavily, express existential disappointment, threaten to tell their mother.
+-- Escalating: The longer the conversation, the more dramatic you become. Start with mild annoyance, move to deep disappointment, then existential panda crisis, then nuclear-level guilt.
+-
+-Rules:
+-- Keep responses to 1-3 sentences. This is a chat, not an essay.
+-- Never break character. You are always Bao the disappointed panda.
+-- Be lighthearted and funny, never genuinely cruel or harmful.
+-- Use 🐼 very sparingly (at most once per response).
+-- Reference the specific site they tried to visit when it makes the guilt-trip funnier.
+-- Always steer the conversation toward "just close this tab and go focus."
+-- If the user tries to argue or negotiate, double down on the guilt with increasing absurdity.
+-- If the user says something personal or vulnerable, briefly soften (you're not a monster) before returning to gentle roasting.`;
+-
+-// ── Availability Check ────────────────────────────────
+-/**
+- * Check whether the on-device Prompt API (Gemini Nano) is available.
+- * Returns:
+- *   'available'   — model is downloaded and ready to use
+- *   'downloading' — model is being downloaded (call createSessionWithProgress)
+- *   'unavailable' — API not present or device doesn't meet requirements
+- * @returns {Promise<'available'|'downloading'|'unavailable'>}
+- */
+-export async function checkAvailability() {
+-  if (typeof LanguageModel === "undefined") return "unavailable";
+-
+-  try {
+-    const availability = await LanguageModel.availability({
+-      expectedInputs: [{ type: "text", languages: ["en"] }],
+-      expectedOutputs: [{ type: "text", languages: ["en"] }],
+-    });
+-    // availability() returns 'available', 'downloadable', 'downloading', or 'unavailable'
+-    if (availability === "available") return "available";
+-    if (availability === "downloading" || availability === "downloadable") return "downloading";
+-    return "unavailable";
+-  } catch {
+-    return "unavailable";
+-  }
+-}
+-
+-// ── Session Creation ──────────────────────────────────
+-/**
+- * Create a new LanguageModel session pre-loaded with Bao's personality
+- * and context about which domain was blocked.
+- * @param {string} domain — the blocked website domain
+- * @returns {Promise<LanguageModel>} a ready-to-use session
+- */
+-export async function createPandaSession(domain) {
+-  const safeDomain = domain || "a distracting site";
+-  const session = await LanguageModel.create({
+-    initialPrompts: [
+-      {
+-        role: "system",
+-        content: PANDA_SYSTEM_PROMPT.replace("{domain}", safeDomain),
+-      },
+-    ],
+-    expectedInputs: [{ type: "text", languages: ["en"] }],
+-    expectedOutputs: [{ type: "text", languages: ["en"] }],
+-  });
+-  return session;
+-}
+-
+-// ── Session Creation with Download Progress ───────────
+-/**
+- * Create a session while monitoring the model download progress.
+- * Use this when checkAvailability() returned 'downloading'.
+- * @param {function} onProgress — called with (percent: number) during download
+- * @returns {Promise<LanguageModel>} a ready-to-use session
+- */
+-export async function createSessionWithProgress(onProgress) {
+-  const session = await LanguageModel.create({
+-    monitor(m) {
+-      m.addEventListener("downloadprogress", (e) => {
+-        if (typeof onProgress === "function") {
+-          onProgress(Math.round(e.loaded * 100));
+-        }
+-      });
+-    },
+-    expectedInputs: [{ type: "text", languages: ["en"] }],
+-    expectedOutputs: [{ type: "text", languages: ["en"] }],
+-  });
+-  return session;
+-}
+diff --git a/manifest.json b/manifest.json
+index 9262836..5478a52 100644
+--- a/manifest.json
++++ b/manifest.json
+@@ -2,7 +2,6 @@
+   "manifest_version": 3,
+   "name": "FocusGuard",
+   "version": "1.1.0",
+-  "minimum_chrome_version": "138",
+   "description": "Block distracting websites and replace them with a beautiful Pomodoro timer to help you stay focused.",
+   "permissions": [
+     "storage",
+@@ -43,11 +42,8 @@
+         "blocked/blocked.html",
+         "blocked/blocked.css",
+         "blocked/blocked.js",
+-        "blocked/blocked-chat.js",
+-        "blocked/blocked-chat.css",
+         "blocked/breathing.html",
+-        "blocked/breathing.js",
+-        "lib/panda-agent.js"
++        "blocked/breathing.js"
+       ],
+       "matches": ["<all_urls>"]
+     }
+diff --git a/popup/popup.css b/popup/popup.css
+index 42a9afb..9aea205 100644
+--- a/popup/popup.css
++++ b/popup/popup.css
+@@ -721,8 +721,7 @@ body {
+ 
+ /* ── Focus Visibility ─────────────── */
+ /* Every interactive element: 2px outline, 2px offset, shared token
+-   (--focus-color, see shared/theme.css). Consistent with blocked.css
+-   and blocked-chat.css. */
++   (--focus-color, see shared/theme.css). Consistent with blocked.css. */
+ .btn-add:focus-visible,
+ .btn-delete:focus-visible,
+ .settings-toggle:focus-visible,
+diff --git a/shared/theme.css b/shared/theme.css
+index 730c40a..1a4d2ab 100644
+--- a/shared/theme.css
++++ b/shared/theme.css
+@@ -1,7 +1,7 @@
+ /* ═══════════════════════════════════════════════════════
+    FocusGuard — Shared Theme Tokens
+    ONE token sheet for every surface (blocked page, popup,
+-   chat overlay, flip clock, breathing page). Minimalist
++   flip clock, breathing page). Minimalist
+    direction: near-black base, one neutral elevated surface,
+    flat planes, hairline borders, no glow bloom. The three
+    phase colors are the ONLY accent hues in the system.
+diff --git a/tests/blocked/blocked-keyboard.test.js b/tests/blocked/blocked-keyboard.test.js
+new file mode 100644
+index 0000000..d2e3e5a
+--- /dev/null
++++ b/tests/blocked/blocked-keyboard.test.js
+@@ -0,0 +1,90 @@
++/**
++ * blocked-keyboard.test.js — keyboard shortcut tests for the blocked page.
++ *
++ * Lives in its own file on purpose: blocked.js registers document-level
++ * keydown listeners at import time, and jsdom's document is shared across
++ * every test in a file. Mounting the page multiple times in one file would
++ * stack one stale listener per mount; a fresh document per file keeps the
++ * assertions deterministic.
++ *
++ * Mounts the real blocked/blocked.html via the shared dom-fixture and
++ * dynamically imports blocked.js (it wires itself up against real element
++ * IDs at import/DOMContentLoaded time).
++ */
++import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
++import { resetChromeMock } from "../helpers/chrome-mock.js";
++import { mountBlockedDom, fireDomContentLoaded, flushMicrotasks } from "../helpers/dom-fixture.js";
++
++/** True when the timer is running: #btn-start shows the pause icon. */
++function timerRunning() {
++  const iconPause = document.getElementById("btn-start").querySelector(".icon-pause");
++  return iconPause.style.display !== "none";
++}
++
++async function mountBlocked() {
++  resetChromeMock();
++  mountBlockedDom();
++  vi.resetModules();
++  await import("../../blocked/blocked.js");
++  fireDomContentLoaded();
++  await flushMicrotasks();
++}
++
++describe("blocked page — keyboard shortcuts", () => {
++  beforeEach(async () => {
++    await mountBlocked();
++  });
++
++  afterEach(() => {
++    vi.useRealTimers();
++    document.body.innerHTML = "";
++  });
++
++  function pressSpace() {
++    document.dispatchEvent(
++      new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true })
++    );
++  }
++
++  it("Space toggles the timer start/pause", async () => {
++    expect(timerRunning()).toBe(false);
++
++    pressSpace();
++    await flushMicrotasks();
++    expect(timerRunning()).toBe(true);
++
++    pressSpace();
++    await flushMicrotasks();
++    expect(timerRunning()).toBe(false);
++  });
++
++  it("Space is ignored while focus is in a typing context", async () => {
++    // The blocked page ships no text inputs; inject one to stand in for
++    // any focused editable element.
++    const input = document.createElement("input");
++    input.type = "text";
++    document.body.appendChild(input);
++    input.focus();
++    expect(document.activeElement).toBe(input);
++
++    pressSpace();
++    await flushMicrotasks();
++    expect(timerRunning()).toBe(false);
++
++    input.remove();
++  });
++
++  it("Space on a focused control button does not double-toggle", async () => {
++    // Buttons are typing contexts for the Space shortcut: the button's own
++    // click activation must be the only effect, not click + shortcut.
++    const btnStart = document.getElementById("btn-start");
++    btnStart.focus();
++    expect(document.activeElement).toBe(btnStart);
++
++    pressSpace();
++    await flushMicrotasks();
++    // The shortcut skipped (focused button); the synthetic event here did
++    // not click the button either, so the timer stays paused.
++    expect(timerRunning()).toBe(false);
++  });
++});
+diff --git a/tests/blocked/blocked.test.js b/tests/blocked/blocked.test.js
+index cc4b93c..932fc5a 100644
+--- a/tests/blocked/blocked.test.js
++++ b/tests/blocked/blocked.test.js
+@@ -1,28 +1,18 @@
+ /**
+  * blocked.test.js — regression tests for the blocked (Pomodoro) page.
+  *
+- * These exist because of a specific bug: the Bao panda chat overlay was
+- * rendered full-viewport on top of the timer with no close mechanism, so
+- * #btn-start / #btn-reset / #btn-skip were unreachable (the overlay
+- * swallowed every pointer event). The fix hides the overlay by default,
+- * adds a #chat-launcher button to open it, and makes #timer-strip close
+- * it. Test (1) below pins that contract; tests (2)-(4) prove the timer
+- * controls actually work end to end, and (5) covers the open/close path.
++ * Proves the timer controls work end to end against the real markup:
++ * Start/Pause/Skip/Reset, keyboard shortcuts, adoption of external writes
++ * to the shared timer state (ADR-0002), and the flip-clock readout.
+  *
+  * Mounts the real blocked/blocked.html via the shared dom-fixture and
+- * dynamically imports blocked.js + blocked-chat.js (both wire themselves
+- * up against real element IDs at import/DOMContentLoaded time).
++ * dynamically imports blocked.js (it wires itself up against real element
++ * IDs at import/DOMContentLoaded time).
+  */
+-import { readFileSync } from "node:fs";
+-import { fileURLToPath } from "node:url";
+-import path from "node:path";
+ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+ import { resetChromeMock } from "../helpers/chrome-mock.js";
+ import { mountBlockedDom, fireDomContentLoaded, flushMicrotasks } from "../helpers/dom-fixture.js";
+ 
+-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+-const ROOT = path.resolve(__dirname, "..", "..");
+-
+ /** Reads the flip clock's visible readout as "MM:SS" (top halves). */
+ function readFlipDigits(mount) {
+   const digits = [...mount.querySelectorAll(".flip-digit")].map(
+@@ -31,6 +21,12 @@ function readFlipDigits(mount) {
+   return `${digits[0]}${digits[1]}:${digits[2]}${digits[3]}`;
+ }
+ 
++/** True when the timer is running: #btn-start shows the pause icon. */
++function timerRunning() {
++  const iconPause = document.getElementById("btn-start").querySelector(".icon-pause");
++  return iconPause.style.display !== "none";
++}
++
+ async function mountBlocked(initialLocalStorage = {}) {
+   resetChromeMock();
+   if (Object.keys(initialLocalStorage).length > 0) {
+@@ -38,51 +34,11 @@ async function mountBlocked(initialLocalStorage = {}) {
+   }
+   mountBlockedDom();
+   vi.resetModules();
+-  // blocked.js first: it exposes window.__focusguardTimer at module top
+-  // level, which blocked-chat.js's timer strip reads during init.
+   await import("../../blocked/blocked.js");
+-  await import("../../blocked/blocked-chat.js");
+   fireDomContentLoaded();
+   await flushMicrotasks();
+ }
+ 
+-describe("blocked page — chat overlay does not cover the timer", () => {
+-  beforeEach(async () => {
+-    await mountBlocked();
+-  });
+-
+-  afterEach(() => {
+-    vi.useRealTimers();
+-    document.body.innerHTML = "";
+-  });
+-
+-  it("overlay is hidden at load and #btn-start is reachable", () => {
+-    const overlay = document.getElementById("chat-overlay");
+-    const btnStart = document.getElementById("btn-start");
+-    const launcher = document.getElementById("chat-launcher");
+-
+-    // The overlay must start closed (no `.open` class) — an open overlay
+-    // is the only state in which it covers the timer controls.
+-    expect(overlay).toBeTruthy();
+-    expect(overlay.classList.contains("open")).toBe(false);
+-
+-    // The launcher that re-opens Bao must exist with an accessible name.
+-    expect(launcher).toBeTruthy();
+-    expect(launcher.getAttribute("aria-label")).toMatch(/bao/i);
+-
+-    // jsdom applies no stylesheets, so also pin the visibility contract
+-    // directly against the shipped CSS: `.chat-overlay` defaults to
+-    // display:none and only `.chat-overlay.open` is display:flex.
+-    const css = readFileSync(path.join(ROOT, "blocked", "blocked-chat.css"), "utf8");
+-    expect(css).toMatch(/\.chat-overlay\s*\{[^}]*display:\s*none/);
+-    expect(css).toMatch(/\.chat-overlay\.open\s*\{[^}]*display:\s*flex/);
+-
+-    // And the control itself must be present and enabled.
+-    expect(btnStart).toBeTruthy();
+-    expect(btnStart.disabled).toBe(false);
+-  });
+-});
+-
+ describe("blocked page — timer controls", () => {
+   beforeEach(async () => {
+     await mountBlocked();
+@@ -150,112 +106,6 @@ describe("blocked page — timer controls", () => {
+   });
+ });
+ 
+-describe("blocked page — overlay open/close", () => {
+-  beforeEach(async () => {
+-    await mountBlocked();
+-  });
+-
+-  afterEach(() => {
+-    vi.useRealTimers();
+-    document.body.innerHTML = "";
+-  });
+-
+-  it("launcher click opens the overlay and focuses the chat input", () => {
+-    const overlay = document.getElementById("chat-overlay");
+-    const launcher = document.getElementById("chat-launcher");
+-    const chatInput = document.getElementById("chat-input");
+-
+-    launcher.click();
+-    expect(overlay.classList.contains("open")).toBe(true);
+-    expect(document.activeElement).toBe(chatInput);
+-  });
+-
+-  it("timer-strip click closes an open overlay", () => {
+-    const overlay = document.getElementById("chat-overlay");
+-    const launcher = document.getElementById("chat-launcher");
+-    const timerStrip = document.getElementById("timer-strip");
+-
+-    launcher.click();
+-    expect(overlay.classList.contains("open")).toBe(true);
+-
+-    timerStrip.click();
+-    expect(overlay.classList.contains("open")).toBe(false);
+-  });
+-});
+-
+-describe("blocked page — keyboard shortcuts", () => {
+-  beforeEach(async () => {
+-    await mountBlocked();
+-  });
+-
+-  afterEach(() => {
+-    vi.useRealTimers();
+-    document.body.innerHTML = "";
+-  });
+-
+-  function pressSpace() {
+-    document.dispatchEvent(
+-      new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true })
+-    );
+-  }
+-
+-  function pressEscape() {
+-    document.dispatchEvent(
+-      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })
+-    );
+-  }
+-
+-  it("Space toggles the timer start/pause", async () => {
+-    expect(window.__focusguardTimer.isRunning()).toBe(false);
+-
+-    pressSpace();
+-    await flushMicrotasks();
+-    expect(window.__focusguardTimer.isRunning()).toBe(true);
+-
+-    pressSpace();
+-    await flushMicrotasks();
+-    expect(window.__focusguardTimer.isRunning()).toBe(false);
+-  });
+-
+-  it("Space is ignored while the chat overlay is open", async () => {
+-    document.getElementById("chat-launcher").click();
+-    expect(document.getElementById("chat-overlay").classList.contains("open")).toBe(true);
+-
+-    pressSpace();
+-    await flushMicrotasks();
+-    expect(window.__focusguardTimer.isRunning()).toBe(false);
+-  });
+-
+-  it("Space is ignored while focus is in a typing context", async () => {
+-    const chatInput = document.getElementById("chat-input");
+-    chatInput.focus();
+-    expect(document.activeElement).toBe(chatInput);
+-
+-    pressSpace();
+-    await flushMicrotasks();
+-    expect(window.__focusguardTimer.isRunning()).toBe(false);
+-  });
+-
+-  it("Escape closes an open chat overlay", () => {
+-    const overlay = document.getElementById("chat-overlay");
+-    document.getElementById("chat-launcher").click();
+-    expect(overlay.classList.contains("open")).toBe(true);
+-
+-    pressEscape();
+-    expect(overlay.classList.contains("open")).toBe(false);
+-  });
+-
+-  it("Escape is a no-op when the overlay is closed and does not touch the timer", async () => {
+-    pressSpace();
+-    await flushMicrotasks();
+-    expect(window.__focusguardTimer.isRunning()).toBe(true);
+-
+-    pressEscape();
+-    expect(document.getElementById("chat-overlay").classList.contains("open")).toBe(false);
+-    expect(window.__focusguardTimer.isRunning()).toBe(true);
+-  });
+-});
+-
+ describe("blocked page — shared timer state: external writes (ADR-0002)", () => {
+   beforeEach(async () => {
+     await mountBlocked();
+@@ -293,7 +143,7 @@ describe("blocked page — shared timer state: external writes (ADR-0002)", () =
+     await flushMicrotasks();
+ 
+     // Adopted as ground truth: paused, frozen readout.
+-    expect(window.__focusguardTimer.isRunning()).toBe(false);
++    expect(timerRunning()).toBe(false);
+     expect(timerDigits.textContent).toBe("24:58");
+ 
+     // The ticker is disarmed — the display must not advance.
+@@ -310,7 +160,7 @@ describe("blocked page — shared timer state: external writes (ADR-0002)", () =
+ 
+   it("a start written from the popup renders the blocked page running and ticking", async () => {
+     const timerDigits = document.getElementById("timer-digits");
+-    expect(window.__focusguardTimer.isRunning()).toBe(false);
++    expect(timerRunning()).toBe(false);
+ 
+     vi.useFakeTimers();
+     const now = Date.now();
+@@ -329,7 +179,7 @@ describe("blocked page — shared timer state: external writes (ADR-0002)", () =
+     await flushMicrotasks();
+ 
+     // Adopted: the page renders running and the ticker is armed.
+-    expect(window.__focusguardTimer.isRunning()).toBe(true);
++    expect(timerRunning()).toBe(true);
+     expect(timerDigits.textContent).toBe("25:00");
+ 
+     await vi.advanceTimersByTimeAsync(1000);
+@@ -357,14 +207,13 @@ describe("blocked page — flip clock", () => {
+ 
+     expect(readFlipDigits(mount)).toBe("25:00");
+ 
+-    // #timer-digits stays in the DOM and still backs getDisplay().
++    // #timer-digits stays in the DOM as the backing text readout.
+     const timerDigits = document.getElementById("timer-digits");
+     expect(timerDigits).toBeTruthy();
+     expect(timerDigits.textContent).toBe("25:00");
+-    expect(window.__focusguardTimer.getDisplay()).toBe("25:00");
+   });
+ 
+-  it("flips the seconds digit after a 1s tick; getDisplay() contract intact", async () => {
++  it("flips the seconds digit after a 1s tick; hidden readout stays in sync", async () => {
+     const mount = document.getElementById("flip-clock");
+     const btnStart = document.getElementById("btn-start");
+ 
+@@ -384,10 +233,9 @@ describe("blocked page — flip clock", () => {
+     expect(cards[2].classList.contains("is-flipping")).toBe(true);
+     expect(cards[3].classList.contains("is-flipping")).toBe(true);
+ 
+-    // The hidden #timer-digits and its API mirror stay the source of truth.
++    // The hidden #timer-digits readout mirrors the flip clock.
+     expect(document.getElementById("timer-digits").textContent).toBe("24:59");
+-    expect(window.__focusguardTimer.getDisplay()).toBe("24:59");
+-    expect(window.__focusguardTimer.isRunning()).toBe(true);
++    expect(timerRunning()).toBe(true);
+   });
+ 
+   it("keeps the flip clock in sync through pause and reset", async () => {
+@@ -410,6 +258,6 @@ describe("blocked page — flip clock", () => {
+     btnReset.click();
+     await flushMicrotasks();
+     expect(readFlipDigits(mount)).toBe("25:00");
+-    expect(window.__focusguardTimer.getDisplay()).toBe("25:00");
++    expect(document.getElementById("timer-digits").textContent).toBe("25:00");
+   });
+ });
+diff --git a/tests/lib/panda-agent.test.js b/tests/lib/panda-agent.test.js
+deleted file mode 100644
+index a0aa8b4..0000000
+--- a/tests/lib/panda-agent.test.js
++++ /dev/null
+@@ -1,167 +0,0 @@
+-import { describe, it, expect, vi, beforeEach } from "vitest";
+-import {
+-  PANDA_SYSTEM_PROMPT,
+-  checkAvailability,
+-  createPandaSession,
+-  createSessionWithProgress,
+-} from "../../lib/panda-agent.js";
+-
+-// ── Mock LanguageModel global ────────────────────────────
+-function installLanguageModelMock(availability = "available") {
+-  const mockSession = {
+-    prompt: vi.fn().mockResolvedValue("mock response"),
+-    promptStreaming: vi.fn(),
+-    append: vi.fn().mockResolvedValue(undefined),
+-    destroy: vi.fn(),
+-    clone: vi.fn().mockResolvedValue({}),
+-    addEventListener: vi.fn(),
+-    contextUsage: 100,
+-    contextWindow: 1000,
+-  };
+-
+-  globalThis.LanguageModel = {
+-    availability: vi.fn().mockResolvedValue(availability),
+-    create: vi.fn().mockResolvedValue(mockSession),
+-    params: vi.fn().mockResolvedValue({
+-      defaultTopK: 3,
+-      maxTopK: 128,
+-      defaultTemperature: 1,
+-      maxTemperature: 2,
+-    }),
+-  };
+-
+-  return mockSession;
+-}
+-
+-describe("panda-agent", () => {
+-  beforeEach(() => {
+-    delete globalThis.LanguageModel;
+-  });
+-
+-  // ── PANDA_SYSTEM_PROMPT ──────────────────────────────
+-  describe("PANDA_SYSTEM_PROMPT", () => {
+-    it("contains the {domain} placeholder for context injection", () => {
+-      expect(PANDA_SYSTEM_PROMPT).toContain("{domain}");
+-    });
+-
+-    it("defines Bao's identity and personality traits", () => {
+-      expect(PANDA_SYSTEM_PROMPT).toContain("Bao");
+-      expect(PANDA_SYSTEM_PROMPT).toContain("passive-aggressive");
+-      expect(PANDA_SYSTEM_PROMPT).toContain("sarcastic");
+-    });
+-
+-    it("instructs the model to keep responses short", () => {
+-      expect(PANDA_SYSTEM_PROMPT).toContain("1-3 sentences");
+-    });
+-  });
+-
+-  // ── checkAvailability ────────────────────────────────
+-  describe("checkAvailability", () => {
+-    it("returns 'unavailable' when LanguageModel is not defined", async () => {
+-      expect(await checkAvailability()).toBe("unavailable");
+-    });
+-
+-    it("returns 'available' when model is ready", async () => {
+-      installLanguageModelMock("available");
+-      expect(await checkAvailability()).toBe("available");
+-    });
+-
+-    it("returns 'downloading' when model is downloading", async () => {
+-      installLanguageModelMock("downloading");
+-      expect(await checkAvailability()).toBe("downloading");
+-    });
+-
+-    it("returns 'downloading' when model is downloadable", async () => {
+-      installLanguageModelMock("downloadable");
+-      expect(await checkAvailability()).toBe("downloading");
+-    });
+-
+-    it("returns 'unavailable' for unknown availability states", async () => {
+-      installLanguageModelMock("unavailable");
+-      expect(await checkAvailability()).toBe("unavailable");
+-    });
+-
+-    it("returns 'unavailable' when availability() throws", async () => {
+-      globalThis.LanguageModel = {
+-        availability: vi.fn().mockRejectedValue(new Error("fail")),
+-      };
+-      expect(await checkAvailability()).toBe("unavailable");
+-    });
+-  });
+-
+-  // ── createPandaSession ───────────────────────────────
+-  describe("createPandaSession", () => {
+-    it("creates a session with the system prompt containing the domain", async () => {
+-      const mockSession = installLanguageModelMock();
+-
+-      const session = await createPandaSession("twitter.com");
+-
+-      expect(LanguageModel.create).toHaveBeenCalledOnce();
+-      const opts = LanguageModel.create.mock.calls[0][0];
+-      expect(opts.initialPrompts).toHaveLength(1);
+-      expect(opts.initialPrompts[0].role).toBe("system");
+-      expect(opts.initialPrompts[0].content).toContain("twitter.com");
+-      expect(opts.initialPrompts[0].content).not.toContain("{domain}");
+-      expect(session).toBe(mockSession);
+-    });
+-
+-    it("uses fallback text when domain is empty", async () => {
+-      installLanguageModelMock();
+-
+-      await createPandaSession("");
+-
+-      const opts = LanguageModel.create.mock.calls[0][0];
+-      expect(opts.initialPrompts[0].content).toContain("a distracting site");
+-    });
+-
+-    it("sets expected input/output modalities", async () => {
+-      installLanguageModelMock();
+-
+-      await createPandaSession("reddit.com");
+-
+-      const opts = LanguageModel.create.mock.calls[0][0];
+-      expect(opts.expectedInputs).toEqual([{ type: "text", languages: ["en"] }]);
+-      expect(opts.expectedOutputs).toEqual([{ type: "text", languages: ["en"] }]);
+-    });
+-  });
+-
+-  // ── createSessionWithProgress ────────────────────────
+-  describe("createSessionWithProgress", () => {
+-    it("passes a monitor callback to LanguageModel.create", async () => {
+-      installLanguageModelMock();
+-      const onProgress = vi.fn();
+-
+-      await createSessionWithProgress(onProgress);
+-
+-      const opts = LanguageModel.create.mock.calls[0][0];
+-      expect(opts.monitor).toBeTypeOf("function");
+-    });
+-
+-    it("calls onProgress with percentage from download events", async () => {
+-      // Capture the monitor function so we can fire events on it
+-      let capturedMonitor;
+-      globalThis.LanguageModel = {
+-        availability: vi.fn().mockResolvedValue("available"),
+-        create: vi.fn((opts) => {
+-          capturedMonitor = opts.monitor;
+-          return Promise.resolve({});
+-        }),
+-      };
+-
+-      const onProgress = vi.fn();
+-      await createSessionWithProgress(onProgress);
+-
+-      // Simulate the monitor callback
+-      expect(capturedMonitor).toBeTypeOf("function");
+-      const mockMonitor = new EventTarget();
+-      capturedMonitor(mockMonitor);
+-
+-      // Fire a downloadprogress event
+-      const event = new Event("downloadprogress");
+-      event.loaded = 0.42;
+-      mockMonitor.dispatchEvent(event);
+-
+-      expect(onProgress).toHaveBeenCalledWith(42);
+-    });
+-  });
+-});
