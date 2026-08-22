@@ -6,6 +6,7 @@ import {
   FAKE_EXTENSION_ID,
 } from "./helpers/chrome-mock.js";
 import { BUILTIN_SITES } from "../lib/domain.js";
+import { CURRENT_SCHEMA_VERSION } from "../lib/storage-migration.js";
 
 // background.js hydrates its cache from chrome.storage at module top level
 // (an IIFE), so the mock must be installed and the module (re)imported fresh
@@ -29,7 +30,7 @@ describe("background.js — navigation blocking", () => {
   it("redirects a blocked-domain navigation to blocked.html with the matched domain", async () => {
     await chrome.storage.sync.set({
       enabled: true,
-      sites: [{ domain: "reddit.com", active: true, interventionMode: "block" }],
+      sites: [{ domain: "reddit.com", active: true, restrictionLevel: "block" }],
     });
     await loadBackground();
 
@@ -47,7 +48,7 @@ describe("background.js — navigation blocking", () => {
   it("the redirect URL contains no dead url= parameter", async () => {
     await chrome.storage.sync.set({
       enabled: true,
-      sites: [{ domain: "reddit.com", active: true, interventionMode: "block" }],
+      sites: [{ domain: "reddit.com", active: true, restrictionLevel: "block" }],
     });
     await loadBackground();
 
@@ -140,7 +141,7 @@ describe("background.js — cache coherence via storage.onChanged", () => {
 
     // Write new sites via storage.set — the onChanged listener should update
     // the in-memory cache synchronously, no further get() needed.
-    await chrome.storage.sync.set({ sites: [{ domain: "reddit.com", active: true, interventionMode: "block" }] });
+    await chrome.storage.sync.set({ sites: [{ domain: "reddit.com", active: true, restrictionLevel: "block" }] });
 
     // No additional storage.get calls should have happened as a result of
     // that write or the cache update.
@@ -201,14 +202,18 @@ describe("background.js — onInstalled seeding (A2 regression)", () => {
       longBreak: 15,
       roundsBeforeLong: 4,
     });
+    expect(data.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(data.focusSessionActive).toBe(false);
+    expect(data.focusSessionEndsAt).toBe(null);
+    expect(data.proLicense).toBe(null);
   });
 
   it("does NOT clobber an existing non-empty `sites` array on update", async () => {
     const existingSites = [
-      { domain: "reddit.com", active: true },
-      { domain: "twitter.com", active: false },
+      { domain: "reddit.com", active: true, restrictionLevel: "strip" },
+      { domain: "twitter.com", active: false, restrictionLevel: "strip" },
     ];
-    await chrome.storage.sync.set({ sites: existingSites, enabled: false });
+    await chrome.storage.sync.set({ sites: existingSites, enabled: false, schemaVersion: CURRENT_SCHEMA_VERSION });
     await loadBackground();
 
     await triggerOnInstalled({ reason: "update" });
@@ -221,14 +226,14 @@ describe("background.js — onInstalled seeding (A2 regression)", () => {
 
   it("backfills only genuinely missing default keys, leaving present ones untouched", async () => {
     // Only `sites` is present; `enabled` and `pomodoroSettings` are missing.
-    await chrome.storage.sync.set({ sites: [{ domain: "example.com", active: true }] });
+    await chrome.storage.sync.set({ sites: [{ domain: "example.com", active: true, restrictionLevel: "strip" }] });
     await loadBackground();
 
     await triggerOnInstalled({ reason: "install" });
 
     const data = await chrome.storage.sync.get(null);
     // Built-in sites are appended since they weren't present
-    expect(data.sites).toEqual([{ domain: "example.com", active: true }, ...BUILTIN_SITES]);
+    expect(data.sites).toEqual([{ domain: "example.com", active: true, restrictionLevel: "strip" }, ...BUILTIN_SITES]);
     expect(data.enabled).toBe(true); // backfilled
     expect(data.pomodoroSettings).toEqual({
       workDuration: 25,
@@ -243,6 +248,10 @@ describe("background.js — onInstalled seeding (A2 regression)", () => {
       enabled: true,
       sites: [...BUILTIN_SITES],
       pomodoroSettings: { workDuration: 25, shortBreak: 5, longBreak: 15, roundsBeforeLong: 4 },
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      focusSessionActive: false,
+      focusSessionEndsAt: null,
+      proLicense: null,
     });
     await loadBackground();
 
