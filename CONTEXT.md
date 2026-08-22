@@ -10,9 +10,7 @@
 
 **Friction** — Progressive psychological interventions that delay or disrupt impulsive access to distracting sites. Ranges from mindful delays (breathing exercises) to hard blocks.
 
-**Intent classification** — Using on-device AI (Chrome Prompt API / Gemini Nano) to evaluate whether a user's navigation to a monitored site is productive or distracting, and routing accordingly.
-
-**Bao** — The on-device AI panda personality that guilt-trips users when they try to access blocked sites. Implemented via Chrome's Prompt API with streaming responses and mood escalation.
+**Intent classification** — URL pattern heuristics that evaluate whether a user's navigation to a monitored site is productive or distracting, and route accordingly.
 
 **Pomodoro timer** — A time management technique (25min work / 5min break cycles) that replaces blocked sites. Includes phase transitions, persistence, and audio notifications.
 
@@ -33,15 +31,15 @@
 
 ## Monetization
 
-- **Free tier** — YouTube surgical stripping only + basic blocking + Bao chat. No data logging.
-- **Pro Focus** — $4.99/mo or $39.99/yr. Unlocks all platforms (Reddit, LinkedIn, Twitter/X, Instagram, TikTok) + progressive friction engine + AI intent classification + scheduling.
+- **Free tier** — YouTube surgical stripping only + basic blocking. No data logging.
+- **Pro Focus** — $4.99/mo or $39.99/yr. Unlocks all platforms (Reddit, LinkedIn, Twitter/X, Instagram, TikTok) + progressive friction engine + intent classification + scheduling.
 - **Student pricing** — Deferred. Launch without verification, add later if data supports it.
 
 ## Product Phases
 
-- **Phase 1 (current)** — Binary domain blocking + Pomodoro timer + Bao AI chat
-- **Phase 2 (next)** — Hybrid: add surgical DOM stripping + progressive friction + AI intent classification
-  - Build order: Content script infrastructure → YouTube stripping prototype → Friction engine → AI intent → Scheduling → Anti-circumvention
+- **Phase 1 (current)** — Binary domain blocking + Pomodoro timer
+- **Phase 2 (next)** — Hybrid: add surgical DOM stripping + progressive friction + intent classification
+  - Build order: Content script infrastructure → YouTube stripping prototype → Friction engine → Intent classification → Scheduling → Anti-circumvention
 - **Phase 3 (later)** — Family co-pilot mode (separate product line)
 
 ## Architecture Decisions
@@ -49,7 +47,7 @@
 - **Content script injection**: Hybrid — declarative for always-on stripping (like Unhook), programmatic for conditional friction overlays and intent classification.
 - **Stripping rule maintenance**: Hybrid — ship default CSS selectors with extension, allow `chrome.storage.sync` overrides for emergency fixes.
 - **Friction engine placement**: Hybrid — Level 1 (breathing delay) uses interstitial page, Level 2 (re-intervention) uses content script overlay on live site, Level 3 (hard block) uses current redirect.
-- **AI intent classification**: Hybrid — URL pattern heuristics for instant classification (80% of cases), escalate to on-device AI for ambiguous cases (runs post-load in content script).
+- **Intent classification**: URL pattern heuristics for instant classification; ambiguous URLs are treated like distracting ones (friction applies).
 
 ## Open Decisions
 

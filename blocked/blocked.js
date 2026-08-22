@@ -95,8 +95,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   timerState = initialState(settings);
 
-  // Mount the flip clock (visual readout). #timer-digits stays the source
-  // of truth for window.__focusguardTimer.getDisplay().
+  // Mount the flip clock (visual readout). #timer-digits stays the
+  // canonical text source that the flip clock mirrors.
   if (flipClockMount) {
     flipClock = createFlipClock(flipClockMount);
   }
@@ -168,7 +168,6 @@ function toggleTimer() {
 //  - typing contexts (input/textarea/select) keep Space as a character
 //  - a focused button already activates on Space — skipping prevents a
 //    double toggle from the same keypress
-//  - while the Bao chat overlay is open, Space belongs to the chat
 function isTypingContext() {
   const el = document.activeElement;
   if (!el || !el.tagName) return false;
@@ -184,8 +183,6 @@ document.addEventListener("keydown", (e) => {
   if (e.key !== " " && e.code !== "Space") return;
   if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
   if (isTypingContext()) return;
-  const overlay = document.getElementById("chat-overlay");
-  if (overlay && overlay.classList.contains("open")) return;
 
   e.preventDefault(); // stop page scroll / late button activation
   toggleTimer();
@@ -550,25 +547,3 @@ function createParticles() {
     container.appendChild(particle);
   }
 }
-
-// ── Timer API (for chat overlay) ───────────────────────
-// Expose minimal timer state so the chat overlay's minimized timer strip
-// can display the current time/phase without duplicating timer logic.
-window.__focusguardTimer = {
-  getDisplay: () => timerDigits.textContent,
-  getPhase: () => timerState.phase,
-  isRunning: () => timerState.isRunning,
-  getProgress: () => {
-    const now = Date.now();
-    const remaining = remainingSeconds(timerState, now);
-    return timerState.totalTime > 0 ? remaining / timerState.totalTime : 1;
-  },
-};
-
-// Reduce particles when the chat overlay is active to free GPU budget.
-document.addEventListener("panda-chat-active", () => {
-  const particles = document.querySelectorAll(".particle");
-  particles.forEach((p, i) => {
-    if (i % 2 !== 0) p.style.display = "none";
-  });
-});
