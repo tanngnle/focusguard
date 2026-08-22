@@ -103,7 +103,7 @@ describe("popup.js — add site", () => {
 
     const data = await chrome.storage.sync.get(["sites"]);
     expect(data.sites).toEqual([{ domain: "reddit.com", active: true }]);
-    expect(document.getElementById("input-hint").textContent).toMatch(/already blocked/i);
+    expect(document.getElementById("input-hint").textContent).toMatch(/already in your list/i);
   });
 });
 

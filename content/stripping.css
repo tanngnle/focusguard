@@ -1,0 +1,110 @@
+/*  ══════════════════════════════════════════════════════
+    FocusGuard — Stripping Styles (Manifest-Declared CSS)
+    Injected synchronously at document_start by the browser
+    via content_scripts css array. This guarantees styles
+    are present BEFORE YouTube renders anything — no flash.
+
+    Each rule is gated by an html[data-fg-*] attribute so
+    the content script can toggle individual elements on/off
+    without removing/re-adding the stylesheet.
+
+    Mirrors the approach used by the Unhook extension.
+    ═══════════════════════════════════════════════════════ */
+
+/* ── YouTube Watch Page ─────────────────────────────── */
+
+/* Sidebar / recommended videos */
+html[data-fg-sidebar="true"] ytd-watch-next-secondary-results-renderer,
+html[data-fg-sidebar="true"] #related {
+  display: none !important;
+}
+
+/* Comments section */
+html[data-fg-comments="true"] ytd-comments,
+html[data-fg-comments="true"] #comments {
+  display: none !important;
+}
+
+/* End screen compact items inside sidebar */
+html[data-fg-end-screen="true"] ytd-watch-next-secondary-results-renderer yt-lockup-view-model {
+  display: none !important;
+}
+
+/* ── YouTube Home Page ──────────────────────────────── */
+
+/* Main video grid */
+html[data-fg-home-feed="true"] ytd-rich-grid-renderer,
+html[data-fg-home-feed="true"] ytd-two-column-browse-results-renderer #primary {
+  display: none !important;
+}
+
+/* Shorts shelf */
+html[data-fg-shorts="true"] ytd-rich-shelf-renderer[is-shorts],
+html[data-fg-shorts="true"] ytd-rich-section-renderer:has(ytd-rich-shelf-renderer[is-shorts]) {
+  display: none !important;
+}
+
+/* Left sidebar (navigation) */
+html[data-fg-sidebar="true"] ytd-mini-guide-renderer,
+html[data-fg-sidebar="true"] tp-yt-app-drawer#guide,
+html[data-fg-sidebar="true"] ytd-guide-renderer {
+  display: none !important;
+}
+
+/* Category chips (filter bar) */
+html[data-fg-home-feed="true"] ytd-feed-filter-chip-bar-renderer,
+html[data-fg-home-feed="true"] #chips-wrapper {
+  display: none !important;
+}
+
+/* Trending tab */
+html[data-fg-trending="true"] ytd-browse[page-subtype='trending'] ytd-rich-grid-renderer {
+  display: none !important;
+}
+
+/* ─ Facebook ───────────────────────────────────────── */
+
+/* News feed (main content area) */
+html[data-fg-news-feed="true"] [role="main"],
+html[data-fg-news-feed="true"] [data-pagelet="MainFeed"] {
+  display: none !important;
+}
+
+/* Right sidebar (sponsored, birthdays, contacts) */
+html[data-fg-right-sidebar="true"] #right_rail_container,
+html[data-fg-right-sidebar="true"] [role="complementary"],
+html[data-fg-right-sidebar="true"] [data-pagelet="RightRail"] {
+  display: none !important;
+}
+
+/* Left sidebar (navigation) */
+html[data-fg-sidebar="true"] [role="navigation"],
+html[data-fg-sidebar="true"] [aria-label="Account"] {
+  display: none !important;
+}
+
+/* Stories */
+html[data-fg-stories="true"] [data-pagelet="Stories"],
+html[data-fg-stories="true"] div[aria-label="Stories"],
+html[data-fg-stories="true"] [role="region"]:has([aria-label*="Stories"]) {
+  display: none !important;
+}
+
+/* Reels */
+html[data-fg-reels="true"] [data-pagelet="ReelsFeed"],
+html[data-fg-reels="true"] div[aria-label="Reels"],
+html[data-fg-reels="true"] a[href*="/reel/"] {
+  display: none !important;
+}
+
+/* Watch */
+html[data-fg-watch="true"] [data-pagelet="WatchFeed"],
+html[data-fg-watch="true"] div[aria-label="Watch"] {
+  display: none !important;
+}
+
+/* Marketplace */
+html[data-fg-marketplace="true"] [data-pagelet="Marketplace"],
+html[data-fg-marketplace="true"] div[aria-label="Marketplace"] {
+  display: none !important;
+}

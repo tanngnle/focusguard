@@ -1,193 +1,246 @@
 ---
-date: 2026-08-21
+date: 2026-08-22
 repo: focusguard
 branch: master
-commit: aabbcb9
+commit: (updated)
 ticket: ""
-topic: "Product Roadmap: Market Gap Analysis to Implementation Strategy"
-tags: [research, codebase, product-roadmap, market-analysis, dom-manipulation, friction-engine, anti-circumvention, ai-intent, family-mode]
+topic: "Product Roadmap: Mindful Delay + Strip Flow and Freemium Monetization"
+tags: [research, product-roadmap, monetization, mindful-delay, freemium, privacy-first]
 ---
 
-# Research: Product Roadmap — Market Gap Analysis to Implementation Strategy
+# Research: Product Roadmap - Mindful Delay + Strip Flow and Freemium Monetization
 
-**Date**: 2026-08-21
+**Date**: 2026-08-22 (updated)
 **Repo**: focusguard
-**Branch**: master
-**Commit**: aabbcb9
 
-## Research Question
+## Executive Summary
 
-Given the strategic market analysis of the productivity site-blocker and parental control ecosystem, what is the current state of FocusGuard, what gaps exist between FocusGuard and market opportunities, and what should the product roadmap prioritize?
+FocusGuard will adopt a **Mindful Delay + Strip** flow (inspired by one sec's peer-reviewed model) combined with a **Freemium** monetization strategy. This positions FocusGuard as the privacy-first, free alternative to one sec with superior DOM control.
 
-## Summary
+## Market Validation
 
-FocusGuard v1.0.0 is a well-architected MV3 Chrome extension with **binary domain blocking + Pomodoro timer replacement**. It has strong privacy fundamentals (zero network requests, self-hosted fonts, local letter avatars) and clean module boundaries. However, it occupies only the most basic tier of the market — simple browser-bound extension with domain-level blocking — while the market research reveals **five high-value unaddressed opportunities**: surgical DOM manipulation, progressive psychological friction, context-aware AI intent, enterprise anti-circumvention, and privacy-first family co-pilot mode.
+### one sec (Market Leader)
+- **100K+ 5-star reviews** on App Store
+- **Peer-reviewed research** (Max Planck Institute): 57% reduction in app opens
+- **Pricing**: $19.99/year for premium features
+- **Weaknesses**: Requires account, cloud sync, no DOM stripping, weak browser extension
 
-## Detailed Findings
+### User Feedback (Reddit r/nosurf, r/digitalminimalism)
+- "Strict blocking doesn't work—social media is embedded in life. One Sec forces a pause to think."
+- "I set mine to where the apps I want to block take over 30-60 seconds before loading"
+- "The forced pause is critical to be able to consciously make the choice"
 
-### Current FocusGuard Architecture (v1.0.0)
+### Key Insight
+Users don't want binary block/unblock. They want **a spectrum of control** that breaks impulses without removing agency.
 
-**What exists today:**
+---
 
-| Layer | Implementation | Files |
-|-------|---------------|-------|
-| Navigation interception | `chrome.webNavigation.onBeforeNavigate` → redirect to timer page | `background.js:70-97` |
-| Domain matching | Exact + subdomain matching, www-stripped, case-insensitive | `lib/matcher.js:31-56` |
-| Domain validation | ASCII-only regex, 2+ label requirement | `lib/domain.js:13-44` |
-| Pomodoro timer | Full state machine with persistence, audio, phase transitions | `lib/timer.js`, `blocked/blocked.js` |
-| Popup UI | Site list management, master toggle, Pomodoro settings sliders | `popup/popup.js` |
-| Storage | `sync` for settings/sites, `local` for timer state | Throughout |
-| Privacy | Zero network requests, self-hosted fonts, local avatars | `manifest.json`, `popup/popup.js:253-264` |
+## Decision 1: Mindful Delay + Strip Flow
 
-**Architecture strengths:**
-- Clean separation: 3 isolated contexts (background, popup, blocked page) communicating only via `chrome.storage`
-- Hot-path cache in background.js avoids storage reads before redirect decisions
-- Site mutation queue prevents race conditions on rapid toggle/delete
-- Wall-clock-based timer (not interval-counting) survives background tab throttling
-- Testable pure modules (`lib/`) with no chrome.* or DOM dependencies
-- Comprehensive test suite with Vitest
+### The Flow
 
-**Architecture limitations (relative to market opportunities):**
-- No content scripts → cannot do DOM manipulation on live pages
-- No scheduling system → cannot do time-based blocking or recurring focus sessions
-- No URL path matching → only domain-level granularity
-- No friction/delay mechanism → binary redirect, no breathing prompt or intention logging
-- No enterprise policy integration → trivially bypassable via chrome://extensions
-- No multi-device sync beyond chrome.storage.sync's built-in profile sync
+```
+User clicks blocked site link
+         |
+         v
+  Mindful delay interstitial (10s breathing)
+         |
+         v
+  "Still want to go?" -> Yes
+         |
+         v
+  Site loads with elements stripped
+  (sidebar, comments, feeds hidden)
+```
 
-### Gap Analysis: Market Opportunities vs. Current State
+### Why This Works
 
-#### GAP 1: Surgical DOM Manipulation (HIGH PRIORITY)
+1. **Delay breaks the dopamine loop** - one sec's research shows 57% reduction in opens
+2. **Stripping reduces doomscrolling** - if they proceed, distractions are hidden
+3. **User retains agency** - not a hard block, they can still access the site
+4. **Two layers of protection** - impulse + environment
 
-**Market signal:** Unhook has 1M+ users doing surgical YouTube element stripping. Users overwhelmingly want to separate productive utility from algorithmic distraction on multi-purpose platforms (YouTube, Reddit, LinkedIn, Twitter/X).
+### Restriction Levels
 
-**Current state:** FocusGuard does binary domain blocking only. No content scripts exist. Cannot distinguish between "watching a specific tutorial" and "doomscrolling recommendations."
+| Level | Delay | After Delay | Use Case |
+|-------|-------|-------------|----------|
+| **Strip** (default) | 10s breathing | Site loads stripped | Most sites |
+| **Friction** | 30-60s + intention prompt | Site loads stripped | High-risk sites |
+| **Block** | None | Redirect to timer | Sites to avoid completely |
 
-**What's needed:**
-- Content scripts for major platforms (YouTube, Reddit, Twitter/X, LinkedIn, Instagram Web, TikTok Web)
-- Pre-configured toggle templates: strip home feeds, recommendation sidebars, Shorts/Reels, comments, trending sections
-- Preserve: search bars, direct messaging, specific video/content playback
-- User-selectable per-site stripping profiles
+### Lock Down Mode (Optional Escalation)
 
-**Effort estimate:** Large — requires new content script architecture, per-platform CSS/DOM selectors, maintenance burden as platforms change their DOM.
+User can start a timed focus session (e.g., 25 min) from the popup. During the session:
+- ALL blocklist sites use Block mode regardless of individual settings
+- After timer ends, sites revert to base levels
 
-#### GAP 2: Progressive Psychological Friction (HIGH PRIORITY)
+---
 
-**Market signal:** one sec (backed by Max Planck Institute research) pioneered mindful delays. Users want habit-loop disruption without total bans. Re-intervention timers prevent passive doomscrolling.
+## Decision 2: Freemium Monetization
 
-**Current state:** FocusGuard does an immediate hard redirect to the timer page. No breathing exercise, no intention logging, no graduated response.
+### Free Tier (Forever)
 
-**What's needed:**
-- Interstitial overlay before redirect: breathing animation, intention entry prompt
-- Re-intervention timer: periodic ejection during browsing sessions on monitored sites
-- Progressive friction matrix: Level 1 (mindful delay) → Level 2 (re-intervention) → Level 3 (hard block)
-- Configurable per-site friction levels
+- Mindful delay (10 seconds, breathing exercise)
+- Basic DOM stripping (YouTube + Facebook)
+- Up to 5 blocked sites
+- Pomodoro timer
+- Zero data logging, fully local
 
-**Effort estimate:** Medium — can build on existing blocked page infrastructure, needs new interstitial overlay and timing logic.
+### Pro Tier ($3.99/mo or $29.99/yr)
 
-#### GAP 3: Context-Aware AI Intent Engine (MEDIUM-HIGH PRIORITY)
+- Unlimited sites
+- All platforms (Reddit, LinkedIn, Twitter/X, Instagram, TikTok)
+- Custom delay duration (5s-120s)
+- Multiple interruption types (breathing, intention prompt, random text, 4-7-8 breathing)
+- Re-intervention timer (periodic check-ins during browsing)
+- Scheduling (time-based rules)
+- Lock Down mode
+- Export/import settings
 
-**Market signal:** The market research identifies a "context-aware AI intent engine" using localized small language models as a key differentiator. Evaluate user intent on navigation — grant access for productive queries, strip elements for unstructured browsing.
+### Why This Model
 
-**Current state:** FocusGuard has no on-device AI integration. Intent classification is URL-pattern heuristics only (`lib/intent-classifier.js`).
+1. **Free tier builds user base** - viral growth, low barrier
+2. **Undercuts one sec** - $29.99/yr vs $19.99/yr but with more features
+3. **Privacy-first** - no ads, no data selling
+4. **Power users pay** - customization and advanced features
 
-**What's needed:**
-- Integrate Chrome's Prompt API for intent classification: analyze URL + page context to determine productive vs. distracting intent
-- Intent-aware routing: productive intent → allow with stripped DOM; distracting intent → apply friction or block
-- Could leverage Chrome's built-in AI for on-device classification without network requests (aligns with privacy-first positioning)
+### Revenue Projection
 
-**Effort estimate:** Medium — the Prompt API integration needs to be built from scratch, and intent classification prompt engineering and integration with the navigation flow need design.
+Conservative estimate (Year 1):
+- 100K free users (achievable with Chrome Web Store + word of mouth)
+- 5% conversion to Pro = 5K paying users
+- 5K × $30/yr = **$150K ARR**
 
-#### GAP 4: Enterprise Anti-Circumvention (MEDIUM PRIORITY)
+---
 
-**Market signal:** Standard Chrome extensions are trivially bypassed via chrome://extensions, Incognito, or secondary browsers. Cold Turkey and DigitalZen achieve system-level enforcement but require heavy daemons. The market wants lightweight enforcement without system daemons.
+## Competitive Positioning
 
-**Current state:** FocusGuard has zero anti-circumvention. Users can disable the extension in one click.
+| Feature | FocusGuard | one sec | Unhook |
+|---------|-----------|---------|--------|
+| Mindful delay | Yes (10s) | Yes (various) | No |
+| DOM stripping | Yes | No | Yes (YouTube only) |
+| Privacy (zero-network) | Yes | No (requires account) | Yes |
+| Price | Free core, $3.99/mo Pro | $19.99/yr | Free |
+| Platforms | YouTube, Facebook (more coming) | All apps | YouTube only |
+| Per-site granularity | Yes | No (same delay for all) | Yes |
 
-**What's needed:**
-- Optional lightweight installer (Windows .exe / macOS script) that applies enterprise policies
-- `ExtensionInstallForcelist` policy to force-install and prevent removal
-- `URLBlocklist` policy to block `chrome://extensions`, `chrome://kill`, `chrome://hang`, `chrome://flags`
-- One-click setup, no heavy background daemon
+**Unique Value Proposition:**
+"The privacy-first, free alternative to one sec with better DOM control."
 
-**Effort estimate:** Medium — the policy files are straightforward, but building and distributing the installer executables requires platform-specific tooling.
+---
 
-#### GAP 5: Family Co-Pilot Mode (MEDIUM PRIORITY, LATER PHASE)
+## Implementation Phases
 
-**Market signal:** Parents want privacy-first filtering. Legacy tools that scrape text messages strain parent-teen trust. Canopy's on-device computer vision approach (redacting explicit images without logging messages) is the preferred model.
+### Phase 1 (Current) - MVP
 
-**Current state:** FocusGuard is self-regulation only. No parental controls, no content filtering, no computer vision.
+**Already implemented:**
+- Content script infrastructure
+- Stripping CSS for YouTube/Facebook
+- Attribute-based toggling
+- Pomodoro timer
 
-**What's needed:**
-- On-device image scanning via TensorFlow.js or similar (no cloud processing)
-- Explicit content detection and redaction before page rendering
-- Device pause schedules (bedtime, homework hours)
-- Multi-device management dashboard for parents
-- Privacy guarantee: no image data leaves the device
+**Next steps:**
+1. Create mindful delay interstitial page
+2. Wire up navigation flow: intercept -> interstitial -> stripped page
+3. Add breathing animation (CSS-only, no external assets)
+4. Update popup UI: 3-way restriction level selector
 
-**Effort estimate:** Very large — requires computer vision model integration, new UI paradigm, significant new permissions.
+**Timeline:** 2-3 weeks
 
-#### GAP 6: Scheduling & Recurring Sessions (LOW-MEDIUM PRIORITY)
+### Phase 2 (Pro Tier) - Monetization
 
-**Market signal:** Freedom and FocusMe offer recurring focus sessions, scheduled blocks. Users want "set and forget" configurations.
+1. Add more platforms (Reddit, LinkedIn, Twitter/X)
+2. Custom delay durations
+3. Multiple interruption types
+4. Re-intervention timer
+5. Scheduling system
+6. License key system (honor-based initially)
 
-**Current state:** FocusGuard is always-on or always-off. No scheduling.
+**Timeline:** 4-6 weeks
 
-**What's needed:**
-- Time-based blocking schedules (e.g., block Twitter 9am-5pm weekdays)
-- Recurring focus session schedules
-- Calendar integration or preset templates (work hours, study time, etc.)
+### Phase 3 (Later) - Advanced Features
 
-**Effort estimate:** Low-Medium — needs a scheduler module in background.js and schedule UI in popup.
+1. AI intent classification (on-device, Chrome Prompt API)
+2. Enterprise anti-circumvention
+3. Family co-pilot mode
 
-### Proposed Product Tier Structure
+**Timeline:** TBD
 
-| Tier | Target | Price | Features |
-|------|--------|-------|----------|
-| **Free Core** | Everyday users, students | $0 | Surgical YouTube DOM stripping, basic 1-site breathing delays, zero data logging |
-| **Pro Focus** | Professionals, power users | $4.99/mo or $39.99/yr | Full AI intent engine, multi-site DOM stripping, progressive friction matrix, scheduling |
-| **Pro Lifetime** | Subscription-averse | $79 one-time | All Pro features, perpetual updates, enterprise anti-bypass script |
-| **Family Co-Pilot** | Parents | $6.99/mo or $59.99/yr | Local CV explicit media redaction, device pause schedules, multi-device management |
+---
 
-## Code References
+## Architecture Changes
 
-- `background.js:70-97` — Navigation interception (needs content script registration for DOM stripping)
-- `background.js:21-47` — Hot-path cache (would need schedule-aware cache for time-based blocking)
-- `lib/matcher.js:31-56` — Site matching (needs URL path and pattern matching for surgical rules)
-- `lib/timer.js` — Timer state machine (friction engine could wrap this with delay phases)
-- `popup/popup.js:34-56` — Site mutation queue (pattern for managing stripping profiles)
-- `manifest.json` — Missing: `content_scripts`, `activeTab`, `scripting` permissions needed for DOM work
+### New Components
 
-## Architecture Insights
+1. **Interstitial page** (`blocked/interstitial.html`)
+   - Breathing animation
+   - Countdown timer
+   - "Still want to go?" button (disabled until timer ends)
+   - Optional: intention text input (for Friction level)
 
-1. **Content script gap is the critical architectural missing piece.** The extension has no content scripts at all. Every high-priority feature (DOM stripping, friction overlays on live pages, intent-aware browsing) requires content script infrastructure. This should be the first architectural addition.
+2. **Updated background.js**
+   - Check restriction level instead of intervention mode
+   - Route to interstitial for Strip/Friction
+   - Route to timer page for Block
+   - Check focusSessionActive for Lock Down mode
 
-2. **An on-device intent engine requires new AI infrastructure.** FocusGuard ships no AI integration today; a Prompt API (Gemini Nano) layer — availability detection, session management, streaming, and fallback — would need to be built from scratch to power an intent classifier. Keeping it on-device preserves the zero-network privacy guarantee.
+3. **Updated popup UI**
+   - 3-way toggle: Strip / Friction / Block
+   - Delay duration slider (for Friction)
+   - Lock Down panel at top of Blocklist tab
 
-3. **The blocked page can evolve into a friction interstitial.** The current full-screen Pomodoro timer page can be repurposed as a progressive friction surface — adding a breathing delay layer before the timer, and a re-intervention overlay that can appear on the actual target site (via content script) during browsing.
+### Storage Schema Updates
 
-4. **Storage schema will need versioning.** Moving from `{enabled, sites, pomodoroSettings}` to include stripping profiles, friction levels, schedules, and intent preferences requires careful migration. The existing `onInstalled` backfill pattern (`background.js:56-65`) provides a good foundation.
+```javascript
+sites: [
+  {
+    domain: "youtube.com",
+    active: true,
+    restrictionLevel: "strip",  // NEW: was interventionMode
+    frictionDelay: 10,          // NEW: seconds
+    strippingProfile: { ... }
+  }
+]
 
-5. **The pure-module architecture (`lib/`) is a testing advantage.** New features (friction engine, scheduler, intent classifier, stripping rule engine) can follow the same pattern: pure logic in `lib/` with no DOM/chrome dependencies, tested with Vitest, then wired into UI contexts.
+focusSessionActive: false,      // NEW: Lock Down flag
+focusSessionEndsAt: null,       // NEW: timestamp
+proLicense: null,               // NEW: license key
+```
 
-## Historical Context (from the thoughts store)
+### Migration Path
 
-No prior research documents or historical context found in the thoughts store. This is the first research document.
+- `interventionMode: "strip"` -> `restrictionLevel: "strip"`
+- `interventionMode: "block"` -> `restrictionLevel: "block"`
+- `frictionLevel: 1` -> `restrictionLevel: "friction"`, `frictionDelay: 10`
+- `frictionLevel: 2, 3` -> `restrictionLevel: "block"`
 
-## Related Research
-
-None yet.
+---
 
 ## Open Questions
 
-1. **Content script architecture:** Should content scripts be injected declaratively (manifest `content_scripts` key) or programmatically (`chrome.scripting.executeScript`)? Declarative is simpler but less flexible; programmatic allows per-site stripping profiles.
+1. **Payment infrastructure**: Honor-system license keys vs. Chrome Web Store payments vs. external gateway (Gumroad/LemonSqueezy)?
+   - Recommendation: Start with honor-system to preserve zero-network promise
+   
+2. **Re-intervention timer frequency**: How often to prompt during browsing sessions?
+   - Recommendation: Configurable, default 15 minutes
+   
+3. **Breathing animation**: CSS-only vs. lightweight JS?
+   - Recommendation: CSS-only (no external assets, preserves privacy)
 
-2. **DOM selector maintenance:** Platform DOM structures change frequently. Should stripping rules ship with the extension (static), be updated via `chrome.storage.sync` (dynamic ruleset), or use a hybrid approach?
+4. **Chrome Web Store description**: How to position vs. one sec?
+   - Recommendation: "Privacy-first alternative to one sec with DOM stripping"
 
-3. **Intent classification latency:** The Prompt API has startup latency. Can intent classification run fast enough to intercept navigation without noticeable delay? Or should it run post-load on the content script side?
+---
 
-4. **Monetization infrastructure:** Chrome Web Store payments vs. external payment gateway. The extension currently has zero network requests — adding payments breaks this privacy guarantee. How to reconcile?
+## Related Documents
 
-5. **Enterprise policy distribution:** Building Windows .exe and macOS .pkg installers requires CI/CD infrastructure. Is there a simpler path (e.g., a downloadable .reg file for Windows, a shell script for macOS)?
+- `CONTEXT.md` - Updated domain model with new terms
+- `docs/plan/flow-design.md` - Detailed flow diagrams
+- `docs/adr/0001-hybrid-architecture-mv3.md` - Architecture decisions
 
-6. **Family mode CV model:** Which on-device computer vision model? Chrome's built-in image understanding? TensorFlow.js with a pre-trained NSFW classifier? The choice affects bundle size, accuracy, and Chrome Web Store review.
+## References
+
+- one sec app: https://one-sec.app/
+- one sec research: https://one-sec.app/research/
+- Session app: https://www.stayinsession.com/
+- Reddit r/nosurf: https://www.reddit.com/r/nosurf/

@@ -1,90 +1,84 @@
 /*  ══════════════════════════════════════════════════════
     FocusGuard — Content Script (Stripping)
     Injected declaratively on YouTube and Facebook pages.
-    Hides distracting UI elements based on user's stripping
-    profile from chrome.storage.sync.
+    Controls stripping by setting html[data-fg-*] attributes
+    that gate CSS rules in content/stripping.css.
 
-    Key design decisions (learned from Unhook extension):
-    - Runs at document_start so styles are injected before
-      the page renders (no flash of distracting content).
-    - Selectors are cached after the first storage read so
-      DOM mutations don't trigger repeated async I/O.
-    - Listens to YouTube's yt-page-data-updated event for
-      reliable SPA navigation detection.
+    This mirrors the Unhook extension approach:
+    - CSS is declared in the manifest and injected
+      synchronously by the browser at document_start.
+    - The content script reads the user's profile from
+      storage and sets/removes html attributes to toggle
+      individual element visibility.
+    - No dynamic <style> injection — the browser handles
+      CSS delivery, eliminating timing races.
+    - Self-contained: no ES module imports, works regardless
+      of how Chrome loads the script.
     ═══════════════════════════════════════════════════════ */
 
-import { getStrippingRules, getDefaultProfile } from "../lib/stripping-rules.js";
+// ── Platform Element Definitions ────────────────────────
+// Maps platform domains to their strippable element names.
+// Inlined here to avoid ES module imports.
 
-// ── Cached State ────────────────────────────────────────
-// After the first successful storage read we keep the
-// resolved selectors in memory.  DOM mutations and SPA
-// navigation can then re-inject styles synchronously —
-// no repeated chrome.storage.sync.get() calls.
+const PLATFORM_ELEMENTS = {
+  "youtube.com": ["homeFeed", "sidebar", "shorts", "comments", "trending", "endScreen"],
+  "facebook.com": ["sidebar", "newsFeed", "rightSidebar", "stories", "reels", "watch", "marketplace"],
+};
 
-let cachedSelectors = null;
-let cachedHostname = null;
-let cachedInterventionMode = null;
+function getAvailableElements(hostname) {
+  const clean = hostname.replace(/^www\./, "").toLowerCase();
+  for (const [domain, elements] of Object.entries(PLATFORM_ELEMENTS)) {
+    if (clean === domain || clean.endsWith("." + domain)) {
+      return elements;
+    }
+  }
+  return null;
+}
 
-// ── Style Injection ─────────────────────────────────────
-// Creates a <style> element with display:none rules for
-// all matching selectors. Single style element, not per-
-// selector, to minimize DOM footprint.
+// ── Attribute Helpers ───────────────────────────────────
+// The CSS file uses html[data-fg-{element}="true"] gates.
+// Setting an attribute instantly activates the corresponding
+// CSS rule; removing it deactivates the rule. No style
+// element creation/removal needed.
 
-function injectStrippingStyles(selectors) {
-  if (!selectors || selectors.length === 0) return;
+const html = document.documentElement;
 
-  const style = document.createElement("style");
-  style.id = "focusguard-stripping-styles";
-  style.textContent = selectors
-    .map((selector) => `${selector} { display: none !important; }`)
-    .join("\n");
-
-  // Insert at the end of <head> to override platform styles
-  const target = document.head || document.documentElement;
-  if (target) {
-    target.appendChild(style);
+function setStripAttribute(elementName, enabled) {
+  // Convert camelCase to kebab-case: homeFeed → home-feed
+  const kebab = elementName.replace(/([A-Z])/g, '-$1').toLowerCase();
+  const attr = `data-fg-${kebab}`;
+  if (enabled) {
+    html.setAttribute(attr, "true");
+  } else {
+    html.removeAttribute(attr);
   }
 }
 
-// ── Remove Existing Styles ──────────────────────────────
-// Removes any previously injected FocusGuard styles so
-// profile changes take effect immediately.
-
-function removeStrippingStyles() {
-  const existing = document.getElementById("focusguard-stripping-styles");
-  if (existing) {
-    existing.remove();
-  }
+function clearAllStripAttributes() {
+  // Remove any data-fg-* attributes we may have set
+  const attrs = Array.from(html.attributes).filter((a) =>
+    a.name.startsWith("data-fg-")
+  );
+  attrs.forEach((a) => html.removeAttribute(a.name));
 }
 
-// ── Re-apply Cached Styles ──────────────────────────────
-// Fast path: re-inject already-resolved selectors without
-// touching storage.  Used by the MutationObserver and the
-// YouTube SPA navigation handler.
+// ── Apply Stripping Profile ─────────────────────────────
+// Reads the stripping profile from storage and sets the
+// appropriate html attributes. The CSS file (injected
+// synchronously by the browser) handles the actual hiding.
 
-function reapplyCachedStyles() {
-  if (cachedInterventionMode !== "strip") {
-    removeStrippingStyles();
-    return;
-  }
-  if (!cachedSelectors || cachedSelectors.length === 0) return;
-
-  removeStrippingStyles();
-  injectStrippingStyles(cachedSelectors);
-}
-
-// ── Resolve Selectors from Storage ──────────────────────
-// Reads the stripping profile from storage, resolves the
-// CSS selectors, and caches them for future re-application.
-// Falls back to the default profile (all elements hidden)
-// if no profile is stored or the storage read fails.
-
-async function resolveAndApplyStripping() {
+async function applyStrippingProfile() {
   const hostname = window.location.hostname;
 
   try {
-    const data = await chrome.storage.sync.get(["sites"]);
+    const data = await chrome.storage.sync.get(["sites", "enabled"]);
     const sites = data.sites || [];
+
+    // Master toggle off — strip nothing
+    if (data.enabled === false) {
+      clearAllStripAttributes();
+      return;
+    }
 
     // Find the site entry for this domain
     const site = sites.find((s) => {
@@ -96,104 +90,68 @@ async function resolveAndApplyStripping() {
       );
     });
 
-    // Check intervention mode
-    const interventionMode = site?.interventionMode || "strip";
-
-    // Cache the intervention mode so reapplyCachedStyles
-    // can short-circuit when the user switches to block mode.
-    cachedInterventionMode = interventionMode;
-
-    if (interventionMode !== "strip") {
-      removeStrippingStyles();
+    // Site not in list or toggled off — strip nothing
+    if (!site || site.active === false) {
+      clearAllStripAttributes();
       return;
     }
 
-    // Get stripping profile (use stored profile or default)
-    const profile = site?.strippingProfile || getDefaultProfile(hostname);
-    const selectors = getStrippingRules(hostname, profile);
+    // Check intervention mode
+    const interventionMode = site.interventionMode || "strip";
+    if (interventionMode !== "strip") {
+      clearAllStripAttributes();
+      return;
+    }
 
-    // Cache for fast re-application
-    cachedHostname = hostname;
-    cachedSelectors = selectors;
+    // Get available elements for this platform
+    const availableElements = getAvailableElements(hostname);
+    if (!availableElements) {
+      // Not a supported platform — clear any attributes
+      clearAllStripAttributes();
+      return;
+    }
 
-    removeStrippingStyles();
-    injectStrippingStyles(selectors);
+    // Get stripping profile (use stored profile or default: all enabled)
+    const profile = site?.strippingProfile || {};
+
+    // Set attributes for each available element
+    availableElements.forEach((elementName) => {
+      // Default to enabled (true) if not explicitly set to false
+      const enabled = profile[elementName] !== false;
+      setStripAttribute(elementName, enabled);
+    });
   } catch (err) {
-    // Storage read failed — apply default profile as fallback
-    const profile = getDefaultProfile(hostname);
-    const selectors = getStrippingRules(hostname, profile);
-
-    cachedInterventionMode = "strip";
-    cachedHostname = hostname;
-    cachedSelectors = selectors;
-
-    removeStrippingStyles();
-    injectStrippingStyles(selectors);
+    // Storage read failed — apply default profile (all enabled)
+    const availableElements = getAvailableElements(hostname);
+    if (availableElements) {
+      availableElements.forEach((elementName) => {
+        setStripAttribute(elementName, true);
+      });
+    }
   }
-}
-
-// ── Debounce Helper ─────────────────────────────────────
-// The MutationObserver fires on every DOM change.  During
-// YouTube's initial page build this can be hundreds of
-// mutations per second.  Debouncing keeps re-application
-// to once per animation frame at most.
-
-function createDebounced(fn, ms) {
-  let timer = null;
-  return (...args) => {
-    clearTimeout(timer);
-    timer = setTimeout(() => fn(...args), ms);
-  };
 }
 
 // ── Initialization ──────────────────────────────────────
-// 1. Resolve selectors from storage and inject styles.
-//    At document_start the DOM is still empty, so this is
-//    purely a storage read + cache population.  The styles
-//    will be injected as soon as <head> exists.
-// 2. Observe DOM mutations for SPA navigation — re-apply
-//    cached styles when YouTube replaces page content.
-// 3. Listen for YouTube's own SPA navigation event.
-// 4. Listen for storage changes (profile updates from popup).
+// 1. Apply stripping profile from storage.
+// 2. Listen for YouTube's SPA navigation event to re-apply
+//    attributes when the page content changes.
+// 3. Listen for storage changes (profile updates from popup).
 
-resolveAndApplyStripping();
-
-// Observe DOM mutations for SPA navigation.
-// Re-applies cached styles (no storage read) when the DOM
-// changes significantly — e.g. YouTube replacing #contents
-// during in-app navigation.
-const debouncedReapply = createDebounced(reapplyCachedStyles, 150);
-
-const observer = new MutationObserver((mutations) => {
-  // Only re-apply if there are meaningful child-list changes
-  // (not just attribute tweaks or text changes).
-  const hasChildChanges = mutations.some((m) => m.type === "childList" && m.addedNodes.length > 0);
-  if (hasChildChanges) {
-    debouncedReapply();
-  }
-});
-
-observer.observe(document.documentElement, {
-  childList: true,
-  subtree: true,
-});
+applyStrippingProfile();
 
 // YouTube SPA navigation — fires on every in-app page change
-// (watch → home → search → etc.).  More reliable than the
-// MutationObserver alone because it's YouTube's own signal
-// that the page content has been replaced.
+// (watch → home → search → etc.). Re-apply attributes to
+// ensure stripping persists across navigation.
 window.addEventListener("yt-page-data-updated", () => {
   // Small delay to let YouTube finish rendering the new page
-  setTimeout(reapplyCachedStyles, 100);
+  setTimeout(applyStrippingProfile, 100);
 });
 
 // Listen for storage changes (profile updates from popup)
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === "sync" && changes.sites) {
-    // Invalidate cache — profile may have changed
-    cachedSelectors = null;
-    cachedHostname = null;
-    cachedInterventionMode = null;
-    resolveAndApplyStripping();
+  if (areaName !== "sync") return;
+  // Re-apply when sites change (toggle, profile, mode) or master toggle flips
+  if (changes.sites || changes.enabled) {
+    applyStrippingProfile();
   }
 });

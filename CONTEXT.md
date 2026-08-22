@@ -2,56 +2,90 @@
 
 ## Glossary
 
-**FocusGuard** — A hybrid focus tool that combines binary domain blocking with surgical DOM stripping to help users separate productive utility from algorithmic distraction on multi-purpose platforms.
+**FocusGuard** - A privacy-first focus tool that combines mindful delay with surgical DOM stripping to help users break impulsive browsing habits and separate productive utility from algorithmic distraction.
 
-**Binary blocking** — The original FocusGuard behavior: when a user navigates to a blocked domain, the extension redirects the tab to a full-screen Pomodoro timer page. All-or-nothing access control.
+**Mindful delay** - A brief breathing exercise (default 10 seconds) that interrupts the impulse to visit a distracting site. Breaks the dopamine loop and gives users a moment to choose intentionally. Inspired by one sec app (peer-reviewed, 57% reduction in app opens).
 
-**Surgical stripping** — Selective removal of distracting UI elements (feeds, recommendations, Shorts, comments) from a platform while preserving productive functionality (search, video playback, messaging). The key differentiator from binary blocking.
+**Surgical stripping** - Selective removal of distracting UI elements (feeds, recommendations, Shorts, comments) from a platform while preserving productive functionality (search, video playback, messaging). Applied after the mindful delay if the user chooses to proceed.
 
-**Friction** — Progressive psychological interventions that delay or disrupt impulsive access to distracting sites. Ranges from mindful delays (breathing exercises) to hard blocks.
+**Binary blocking** - The original FocusGuard behavior: when a user navigates to a blocked domain, the extension redirects the tab to a full-screen Pomodoro timer page. Available as an escalation option for users who want stricter control.
 
-**Intent classification** — URL pattern heuristics that evaluate whether a user's navigation to a monitored site is productive or distracting, and route accordingly.
+**Friction** - Progressive psychological interventions that delay or disrupt impulsive access to distracting sites. The core innovation: delay breaks the impulse, stripping reduces doomscrolling if they proceed.
 
-**Pomodoro timer** — A time management technique (25min work / 5min break cycles) that replaces blocked sites. Includes phase transitions, persistence, and audio notifications.
+**Pomodoro timer** - A time management technique (25min work / 5min break cycles) used in binary blocking mode. Includes phase transitions, persistence, and audio notifications.
 
-**Site** — A domain entry in the user's blocklist. Currently identified by domain string only (e.g., "youtube.com"). Each site has an **intervention mode**: `strip` (default, hides distracting elements) or `block` (hard redirect to timer). Users toggle between modes via a switch on the site card. Future: may include URL path patterns and custom stripping profiles.
+**Site** - A domain entry in the user's blocklist. Each site has a **restriction level**: `strip` (default, mindful delay + hide elements), `friction` (longer delay + confirmation), or `block` (hard redirect to timer). Users choose per site how strict they want to be.
 
-**Intervention mode** — How FocusGuard responds when a user navigates to a monitored site. `strip` = site loads with distracting elements hidden (default). `block` = hard redirect to Pomodoro timer page (escalation option). Default is `strip` to match the progressive philosophy.
+**Restriction level** - How FocusGuard responds when a user navigates to a monitored site:
+- `strip` = 10-second breathing prompt, then site loads with distracting elements hidden (default)
+- `friction` = longer delay (30-60s) + intention confirmation, then stripped
+- `block` = immediate redirect to Pomodoro timer page (strictest)
 
-**Stripping profile** — A per-site configuration that specifies which UI elements to hide (feeds, recommendations, comments, etc.). Ships with pre-configured templates for major platforms (YouTube, Reddit, LinkedIn, Twitter/X) with individual toggles for each element. Not yet implemented.
+**Stripping profile** - A per-site configuration that specifies which UI elements to hide (feeds, recommendations, comments, etc.). Ships with pre-configured templates for major platforms (YouTube, Facebook) with individual toggles for each element.
 
-**Friction level** — The intensity of intervention for a site: Level 1 (mindful delay), Level 2 (re-intervention timer), Level 3 (hard block). Not yet implemented.
-
-**Family co-pilot mode** — A deferred feature for parental controls using on-device computer vision to filter explicit content. Out of scope for v2.
+**Lock Down** - An optional escalation mode. User starts a timed focus session (e.g., 25 min) from the popup. During the session, ALL blocklist sites use `block` mode regardless of their individual restriction levels. After the timer ends, sites revert to their base levels.
 
 ## Target Users
 
-- **Students** — Price-sensitive, need study focus, high volume potential
-- **Knowledge workers / professionals** — Willing to pay, need surgical stripping for YouTube/LinkedIn/Reddit
+- **Students** - Price-sensitive, need study focus, high volume potential. Free tier covers their needs.
+- **Knowledge workers / professionals** - Willing to pay for advanced features. Pro tier unlocks all platforms and customization.
+- **Privacy-conscious users** - Value zero-network, local-only tools. Differentiator vs. one sec (requires account, cloud sync).
 
-## Monetization
+## Monetization (Freemium)
 
-- **Free tier** — YouTube surgical stripping only + basic blocking. No data logging.
-- **Pro Focus** — $4.99/mo or $39.99/yr. Unlocks all platforms (Reddit, LinkedIn, Twitter/X, Instagram, TikTok) + progressive friction engine + intent classification + scheduling.
-- **Student pricing** — Deferred. Launch without verification, add later if data supports it.
+**Free tier (forever):**
+- Mindful delay (10 seconds, breathing exercise)
+- Basic DOM stripping (YouTube + Facebook)
+- Up to 5 blocked sites
+- Pomodoro timer
+- Zero data logging, fully local
+
+**Pro tier ($3.99/mo or $29.99/yr):**
+- Unlimited sites
+- All platforms (Reddit, LinkedIn, Twitter/X, Instagram, TikTok)
+- Custom delay duration (5s-120s)
+- Multiple interruption types (breathing, intention prompt, random text, 4-7-8 breathing)
+- Re-intervention timer (periodic check-ins during browsing)
+- Scheduling (time-based rules, e.g., block Twitter 9am-5pm weekdays)
+- Lock Down mode (session-based escalation)
+- Export/import settings
+
+**Why this model:**
+- Free tier builds user base (viral growth)
+- Undercuts one sec ($19.99/yr) with more features
+- Privacy-first = no ads, no data selling
+- Power users pay for customization and advanced features
 
 ## Product Phases
 
-- **Phase 1 (current)** — Binary domain blocking + Pomodoro timer
-- **Phase 2 (next)** — Hybrid: add surgical DOM stripping + progressive friction + intent classification
-  - Build order: Content script infrastructure → YouTube stripping prototype → Friction engine → Intent classification → Scheduling → Anti-circumvention
-- **Phase 3 (later)** — Family co-pilot mode (separate product line)
+- **Phase 1 (current)** - Mindful delay + surgical stripping for YouTube/Facebook + basic blocking
+  - Already implemented: content scripts, stripping CSS, attribute-based toggling
+  - Next: add mindful delay interstitial
+  
+- **Phase 2 (Pro tier)** - All platforms + advanced friction + scheduling
+  - Reddit, LinkedIn, Twitter/X, Instagram, TikTok stripping
+  - Custom delay durations and interruption types
+  - Re-intervention timer
+  - Time-based scheduling
+  - Lock Down mode
+  
+- **Phase 3 (later)** - AI intent classification + enterprise features
+  - On-device AI to classify productive vs. distracting intent
+  - Enterprise anti-circumvention (optional)
+  - Family co-pilot mode (separate product line)
 
 ## Architecture Decisions
 
-- **Content script injection**: Hybrid — declarative for always-on stripping (like Unhook), programmatic for conditional friction overlays and intent classification.
-- **Stripping rule maintenance**: Hybrid — ship default CSS selectors with extension, allow `chrome.storage.sync` overrides for emergency fixes.
-- **Friction engine placement**: Hybrid — Level 1 (breathing delay) uses interstitial page, Level 2 (re-intervention) uses content script overlay on live site, Level 3 (hard block) uses current redirect.
-- **Intent classification**: URL pattern heuristics for instant classification; ambiguous URLs are treated like distracting ones (friction applies).
+- **Content script injection**: Hybrid - declarative for always-on stripping (like Unhook), programmatic for conditional friction overlays.
+- **Stripping rule maintenance**: Hybrid - ship default CSS selectors with extension, allow `chrome.storage.sync` overrides for emergency fixes.
+- **Friction engine placement**: Mindful delay uses interstitial page (like one sec), re-intervention uses content script overlay, binary block uses redirect.
+- **Privacy**: Zero network requests. No account required. All data stays on device. Self-hosted fonts, local avatars.
+- **Payment**: Honor-system license keys for Pro tier (preserves zero-network promise). Optional external payment gateway later.
 
 ## Open Decisions
 
-- Privacy boundary (zero-network vs pragmatic)
+- **Payment infrastructure**: Honor-system license keys vs. Chrome Web Store payments vs. external gateway (Gumroad/LemonSqueezy)
 - **Stripping profile configuration UX**: Templates + toggles (pre-configured defaults with individual element enable/disable)
-- **Popup UI for intervention mode**: Default = strip, toggle switch to escalate to block
+- **Popup UI for restriction levels**: 3-way toggle (Strip / Friction / Block) per site
 - **Storage schema versioning**: Add `schemaVersion` key, migrate on `onInstalled` event, one-way migration
+- **Re-intervention timer frequency**: How often to prompt during browsing sessions (configurable?)
