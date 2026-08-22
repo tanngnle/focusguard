@@ -596,6 +596,58 @@ function renderLockDown() {
     disarmLockDownTicker();
     if (lockdownHeaderStatus) lockdownHeaderStatus.hidden = true;
   }
+
+  // Ticket #26 — the card list mirrors the session state: every card
+  // gains a lock badge and inert controls while active, and becomes
+  // fully interactive again the moment the session ends. This runs on
+  // every render path (initial read, our own writes, external clears),
+  // so card states always follow the session without a popup reload.
+  applyLockDownStateToCards();
+}
+
+// ── Lock Down Card State (#26) ──────────────────────
+// Purely visual/reactive — enforcement is the background worker's job.
+// While a session is active every site card (built-in and user-added)
+// shows a lock badge and its per-site controls are inert. The MASTER
+// toggle is deliberately NOT touched — the extension can always be
+// disabled, even mid-session.
+function buildLockBadge() {
+  const badge = document.createElement("span");
+  badge.className = "lockdown-badge";
+  badge.innerHTML = `
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="3" y="11" width="18" height="11" rx="2"></rect>
+      <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+    </svg>
+    <span class="lockdown-badge-text">Lock Down</span>
+  `;
+  return badge;
+}
+
+function applyLockDownStateToCard(card) {
+  card.classList.toggle("lockdown", lockdownSessionActive);
+
+  card.querySelectorAll(".restriction-select").forEach((select) => {
+    select.disabled = lockdownSessionActive;
+  });
+  card.querySelectorAll(".site-toggle input, .element-toggle input").forEach((checkbox) => {
+    checkbox.disabled = lockdownSessionActive;
+  });
+  card.querySelectorAll(".btn-delete").forEach((btn) => {
+    btn.disabled = lockdownSessionActive;
+  });
+
+  const badge = card.querySelector(".lockdown-badge");
+  if (lockdownSessionActive && !badge) {
+    card.insertBefore(buildLockBadge(), card.querySelector(".site-domain"));
+  } else if (!lockdownSessionActive && badge) {
+    badge.remove();
+  }
+}
+
+function applyLockDownStateToCards() {
+  if (!sitesList) return;
+  sitesList.querySelectorAll(".site-card").forEach(applyLockDownStateToCard);
 }
 
 // Deadline-based countdown — recomputed from focusSessionEndsAt on every
@@ -939,6 +991,11 @@ function buildSiteCard(site) {
     card.classList.add("removing");
     setTimeout(() => queueSiteMutation(() => removeSite(site.domain)), 250);
   });
+
+  // Lock Down card state (#26) — applied at build time so cards created
+  // mid-session are locked immediately; applyLockDownStateToCards() keeps
+  // already-rendered cards in step when the session flips later.
+  applyLockDownStateToCard(card);
 
   return card;
 }

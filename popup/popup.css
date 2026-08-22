@@ -440,7 +440,7 @@ body {
   flex-shrink: 0;
 }
 
-.btn-delete:hover {
+.btn-delete:hover:not(:disabled) {
   background: rgba(255, 71, 87, 0.15);
   color: var(--danger);
 }
@@ -471,7 +471,7 @@ body {
   transition: border-color var(--transition), background var(--transition);
 }
 
-.restriction-select:hover {
+.restriction-select:hover:not(:disabled) {
   background: var(--surface-hover);
   border-color: var(--border-accent);
 }
@@ -532,6 +532,12 @@ body {
   transform: translateX(-50%) translateY(0);
 }
 
+/* A disabled select carries no tooltip — hovering the wrapper must
+   never resurrect it while the card is locked down (#26). */
+.restriction-field:has(.restriction-select:disabled) .restriction-tooltip {
+  display: none;
+}
+
 /* The actual tooltip copy — keyed off the selected option. */
 .restriction-field:has(.restriction-select option[value="strip"]:checked) .restriction-tooltip::before {
   content: '3s breathing + hide distractions';
@@ -575,7 +581,7 @@ body {
   transition: color var(--transition);
 }
 
-.element-toggle:hover {
+.element-toggle:hover:not(:has(input:disabled)) {
   color: var(--text-primary);
 }
 
@@ -584,6 +590,46 @@ body {
   height: 13px;
   accent-color: var(--accent);
   cursor: pointer;
+}
+
+/* ── Lock Down Disabled Card State (#26) ─────────── */
+/* While a Lock Down session runs, every site card wears a lock badge
+   and its per-site controls go inert — the card itself stays visible
+   and calm, just visibly locked. The master toggle is unaffected. */
+.lockdown-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid var(--border-accent);
+  border-radius: 10px;
+  background: rgba(46, 213, 115, 0.08);
+  color: var(--accent-light);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.lockdown-badge-text {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.site-card.lockdown .restriction-select,
+.site-card.lockdown .site-toggle .toggle-slider,
+.site-card.lockdown .element-toggle,
+.site-card.lockdown .btn-delete {
+  opacity: 0.5;
+}
+
+.site-card.lockdown .site-toggle,
+.site-card.lockdown .element-toggle,
+.site-card.lockdown .element-toggle input,
+.site-card.lockdown .restriction-select,
+.site-card.lockdown .btn-delete {
+  cursor: default;
 }
 
 /* ── Lock Down Panel (#25) ─────────────────────── */
@@ -1101,6 +1147,10 @@ body {
   .open-full-timer,
   .restriction-select,
   .restriction-tooltip,
+  .site-card.lockdown .restriction-select,
+  .site-card.lockdown .site-toggle .toggle-slider,
+  .site-card.lockdown .element-toggle,
+  .site-card.lockdown .btn-delete,
   .slider::-webkit-slider-thumb {
     transition: none !important;
   }
