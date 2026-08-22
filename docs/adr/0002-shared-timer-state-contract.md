@@ -1,4 +1,4 @@
-# ADR-0002: Shared Timer State Contract Between Popup and Blocked Page
+﻿# ADR-0002: Shared Timer State Contract Between Popup and Blocked Page
 
 ## Status
 
@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-Before v1.1.0, the Pomodoro timer ran only on the blocked page (`blocked/blocked.js`), and `chrome.storage.local["focusguard_timer_state"]` was a persistence detail of that single surface. The v1.1.0 popup redesign adds a **Timer tab** with full controls (Start / Pause / Skip / Reset) and its own flip-clock readout, giving the same timer **two writers and two readers** in two isolated contexts. MV3 forbids message passing shortcuts we'd otherwise reach for (no persistent ports between popup and extension pages worth the wiring), and the repo's standing convention is that contexts communicate only through `chrome.storage`.
+Before v1.1.0, the Pomodoro timer ran only on the blocked page (`blocked/blocked.js`), and `chrome.storage.local["MindfulBrowse_timer_state"]` was a persistence detail of that single surface. The v1.1.0 popup redesign adds a **Timer tab** with full controls (Start / Pause / Skip / Reset) and its own flip-clock readout, giving the same timer **two writers and two readers** in two isolated contexts. MV3 forbids message passing shortcuts we'd otherwise reach for (no persistent ports between popup and extension pages worth the wiring), and the repo's standing convention is that contexts communicate only through `chrome.storage`.
 
 Two risks had to be addressed:
 
@@ -15,7 +15,7 @@ Two risks had to be addressed:
 
 ## Decision
 
-Keep a **single shared state object** in `chrome.storage.local["focusguard_timer_state"]` and make storage the only communication channel:
+Keep a **single shared state object** in `chrome.storage.local["MindfulBrowse_timer_state"]` and make storage the only communication channel:
 
 - **Shape**: the timer state fields (`phase`, `currentRound`, `totalRounds`, `totalTime`, `isRunning`, `endsAt`, `remaining`) plus `savedAt` (epoch ms). All phase math goes through the pure transitions in `lib/timer.js` (`start`, `pause`, `reset`, `skip`) so both surfaces compute identically.
 - **Deadline-based timing**: `endsAt` is the source of truth while running; `remaining` only while paused. A revived session derives its display from `Date.now()`, so neither surface needs to trust the other's tick cadence. If a deadline expires while a surface is open, that surface's ticker runs the completion transition; if a restored state's deadline already passed, it is advanced exactly one phase.

@@ -1,8 +1,8 @@
-# AGENTS.md
+﻿# AGENTS.md
 
 ## Project
 
-**FocusGuard** — a Manifest V3 Chrome extension that intercepts navigation to user-listed domains and redirects the tab to a full-screen Pomodoro timer page.
+**MindfulBrowse** — a Manifest V3 Chrome extension that intercepts navigation to user-listed domains and redirects the tab to a full-screen Pomodoro timer page.
 
 Vanilla JS/HTML/CSS with **no build step** — files are loaded by Chrome exactly as they sit on disk. npm exists for tests and lint only (Vitest + ESLint); nothing in `node_modules/` is required to load the extension.
 

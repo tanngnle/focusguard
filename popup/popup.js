@@ -1,5 +1,5 @@
-/*  ═══════════════════════════════════════════════════════
-    FocusGuard — Popup Logic
+﻿/*  ═══════════════════════════════════════════════════════
+    MindfulBrowse — Popup Logic
     Manages blocked sites list, toggles, and settings
     ═══════════════════════════════════════════════════════ */
 
@@ -88,11 +88,11 @@ function queueSiteMutation(fn) {
 
 // ── Timer State Mutation Queue ──────────────────────────
 // The popup and the blocked page share one timer state in
-// chrome.storage.local["focusguard_timer_state"]. Every popup write goes
+// chrome.storage.local["MindfulBrowse_timer_state"]. Every popup write goes
 // through this queue (same read-modify-write race as the sites array:
 // two rapid Start/Skip clicks must not clobber each other) and mirrors
 // the queueSiteMutation pattern above.
-const TIMER_STATE_KEY = "focusguard_timer_state";
+const TIMER_STATE_KEY = "MindfulBrowse_timer_state";
 let timerMutationQueue = Promise.resolve();
 function queueTimerMutation(fn) {
   const run = timerMutationQueue.then(fn, fn);
@@ -121,7 +121,7 @@ let popupTickerHandle = null;
 let hasStoredTimerState = false;
 
 const PHASE_LABELS = { work: "WORK", shortBreak: "BREAK", longBreak: "LONG BREAK" };
-const TAB_STORAGE_KEY = "focusguard_active_tab";
+const TAB_STORAGE_KEY = "MindfulBrowse_active_tab";
 
 // ── Init ────────────────────────────────────────────────
 async function init() {

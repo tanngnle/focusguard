@@ -1,4 +1,4 @@
-# FocusGuard - User Flow Design (Mindful Delay + Strip)
+﻿# MindfulBrowse - User Flow Design (Mindful Delay + Strip)
 
 ## The Restriction Spectrum
 
@@ -138,7 +138,7 @@ User clicks Reddit link (set to Block level)
 ## Flow 4: Lock Down (Session Escalation)
 
 ```
-User opens FocusGuard popup
+User opens MindfulBrowse popup
          |
          v
   +----------------------------------+
@@ -181,7 +181,7 @@ User opens FocusGuard popup
 
 ```
 +------------------------------------------+
-|  FocusGuard              [Master Toggle] |
+|  MindfulBrowse              [Master Toggle] |
 |     Stay focused, stay sharp             |
 +------------------------------------------+
 |  [ Blocklist ]  [ Timer ]                |
@@ -227,7 +227,7 @@ User opens FocusGuard popup
 
 ```
 +------------------------------------------+
-|  FocusGuard              [Master Toggle] |
+|  MindfulBrowse              [Master Toggle] |
 --------------------------------------------
 |  [ Blocklist ]  [ Timer ]                |
 --------------------------------------------
@@ -298,7 +298,7 @@ chrome.storage.sync = {
 }
 
 chrome.storage.local = {
-  focusguard_timer_state: {
+  MindfulBrowse_timer_state: {
     phase: "work",
     currentRound: 1,
     totalRounds: 4,
@@ -334,7 +334,7 @@ Timer = separate feature         Timer = Block mode's engine
 
 ## Competitive Positioning
 
-| Feature | FocusGuard | one sec | Unhook |
+| Feature | MindfulBrowse | one sec | Unhook |
 |---------|-----------|---------|--------|
 | Mindful delay | Yes (10s) | Yes (various) | No |
 | DOM stripping | Yes | No | Yes (YouTube only) |

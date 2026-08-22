@@ -1,5 +1,5 @@
-/*  ═══════════════════════════════════════════════════════
-    FocusGuard — Background Service Worker
+﻿/*  ═══════════════════════════════════════════════════════
+    MindfulBrowse — Background Service Worker
     Intercepts navigation to blocked sites and redirects
     to the Pomodoro timer page.
     ═══════════════════════════════════════════════════════ */

@@ -1,0 +1,294 @@
+commit a807aeec748cc9325dfdcd210deec13e1d33e7e8
+Author: tanngnle <120621197+tanngnle@users.noreply.github.com>
+Date:   Sat Aug 22 15:06:48 2026 +0700
+
+    Remove AI implementation (Bao on-device chat)
+    
+    User decision to drop the AI implementation entirely. The only AI in the project was the Bao on-device panda chat (Chrome Prompt API / Gemini Nano), so this removes it root and branch:
+    
+    - Delete lib/panda-agent.js (Prompt API agent), blocked/blocked-chat.js and blocked/blocked-chat.css (chat overlay), and tests/lib/panda-agent.test.js
+    
+    - Remove chat overlay markup and launcher from blocked/blocked.html, and the chat-coupled pieces from blocked/blocked.js (Space-overlay guard, window.__focusguardTimer API exposed for the chat's timer strip, panda-chat-active particle throttle)
+    
+    - Revert manifest additions made for the AI: minimum_chrome_version 138 and the blocked-chat/panda-agent web_accessible_resources entries
+    
+    - Update blocked-page tests: drop chat-overlay suites, assert via DOM/storage instead of the removed __focusguardTimer hook, and move keyboard-shortcut tests to their own file (document-level listeners accumulate across mounts within one jsdom file)
+    
+    - Scrub Bao/chat references from README.md, CONTEXT.md, docs/QA-TEST-PLAN.md, docs/research-product-roadmap.md and stale CSS/HTML comments
+    
+    Kept intact: Pomodoro blocked page, breathing page, DOM stripping, friction engine, popup, and the heuristic-only intent classifier (no AI model involved). The extension still makes zero network requests.
+    
+    Verification: npx vitest run -> 12 files / 203 tests passed (baseline was 222; removed suites covered only the AI feature). npx eslint . -> 0 errors, 10 pre-existing warnings unchanged from master.
+
+diff --git a/CONTEXT.md b/CONTEXT.md
+index b44edd8..ad874f1 100644
+--- a/CONTEXT.md
++++ b/CONTEXT.md
+@@ -10,9 +10,7 @@
+ 
+ **Friction** — Progressive psychological interventions that delay or disrupt impulsive access to distracting sites. Ranges from mindful delays (breathing exercises) to hard blocks.
+ 
+-**Intent classification** — Using on-device AI (Chrome Prompt API / Gemini Nano) to evaluate whether a user's navigation to a monitored site is productive or distracting, and routing accordingly.
+-
+-**Bao** — The on-device AI panda personality that guilt-trips users when they try to access blocked sites. Implemented via Chrome's Prompt API with streaming responses and mood escalation.
++**Intent classification** — URL pattern heuristics that evaluate whether a user's navigation to a monitored site is productive or distracting, and route accordingly.
+ 
+ **Pomodoro timer** — A time management technique (25min work / 5min break cycles) that replaces blocked sites. Includes phase transitions, persistence, and audio notifications.
+ 
+@@ -33,15 +31,15 @@
+ 
+ ## Monetization
+ 
+-- **Free tier** — YouTube surgical stripping only + basic blocking + Bao chat. No data logging.
+-- **Pro Focus** — $4.99/mo or $39.99/yr. Unlocks all platforms (Reddit, LinkedIn, Twitter/X, Instagram, TikTok) + progressive friction engine + AI intent classification + scheduling.
++- **Free tier** — YouTube surgical stripping only + basic blocking. No data logging.
++- **Pro Focus** — $4.99/mo or $39.99/yr. Unlocks all platforms (Reddit, LinkedIn, Twitter/X, Instagram, TikTok) + progressive friction engine + intent classification + scheduling.
+ - **Student pricing** — Deferred. Launch without verification, add later if data supports it.
+ 
+ ## Product Phases
+ 
+-- **Phase 1 (current)** — Binary domain blocking + Pomodoro timer + Bao AI chat
+-- **Phase 2 (next)** — Hybrid: add surgical DOM stripping + progressive friction + AI intent classification
+-  - Build order: Content script infrastructure → YouTube stripping prototype → Friction engine → AI intent → Scheduling → Anti-circumvention
++- **Phase 1 (current)** — Binary domain blocking + Pomodoro timer
++- **Phase 2 (next)** — Hybrid: add surgical DOM stripping + progressive friction + intent classification
++  - Build order: Content script infrastructure → YouTube stripping prototype → Friction engine → Intent classification → Scheduling → Anti-circumvention
+ - **Phase 3 (later)** — Family co-pilot mode (separate product line)
+ 
+ ## Architecture Decisions
+@@ -49,7 +47,7 @@
+ - **Content script injection**: Hybrid — declarative for always-on stripping (like Unhook), programmatic for conditional friction overlays and intent classification.
+ - **Stripping rule maintenance**: Hybrid — ship default CSS selectors with extension, allow `chrome.storage.sync` overrides for emergency fixes.
+ - **Friction engine placement**: Hybrid — Level 1 (breathing delay) uses interstitial page, Level 2 (re-intervention) uses content script overlay on live site, Level 3 (hard block) uses current redirect.
+-- **AI intent classification**: Hybrid — URL pattern heuristics for instant classification (80% of cases), escalate to on-device AI for ambiguous cases (runs post-load in content script).
++- **Intent classification**: URL pattern heuristics for instant classification; ambiguous URLs are treated like distracting ones (friction applies).
+ 
+ ## Open Decisions
+ 
+diff --git a/README.md b/README.md
+index 1a84c3a..271f126 100644
+--- a/README.md
++++ b/README.md
+@@ -33,9 +33,7 @@ When you're redirected to the timer page, the countdown is rendered as a
+ split-flap **flip clock** in a minimalist dark theme (near-black surfaces,
+ hairline borders, and the three phase colors as the only accents). Controls
+ let you start/pause, reset, or skip to the next phase, and **Space** toggles
+-the timer from anywhere on the page. A floating 🐼 button opens Bao, an
+-on-device AI panda who comments on your attempts to negotiate; **Escape** or
+-the minimized timer strip closes the chat again.
++the timer from anywhere on the page.
+ 
+ **Pomodoro settings**, adjustable via sliders in the popup's Timer tab:
+ 
+diff --git a/blocked/blocked.css b/blocked/blocked.css
+index 8657c71..dedd4de 100644
+--- a/blocked/blocked.css
++++ b/blocked/blocked.css
+@@ -238,8 +238,8 @@ body {
+ }
+ 
+ /* Phase B — the flip clock renders the digits now; this span is kept
+-   (visually hidden) exactly as before because it backs
+-   window.__focusguardTimer.getDisplay() and the timer strip. */
++   (visually hidden) as the canonical text readout that the flip clock
++   mirrors. */
+ .timer-digits {
+   position: absolute;
+   width: 1px;
+@@ -431,7 +431,7 @@ body.phase-long-break {
+ /* ── Focus Visibility ─────────────── */
+ /* Keyboard focus only (:focus-visible) — mouse clicks on the round
+    controls must not leave a ring. 2px outline, 2px offset, shared
+-   token, same as popup.css and blocked-chat.css. */
++   token, same as popup.css. */
+ .btn-control:focus-visible {
+   outline: 2px solid var(--focus-color);
+   outline-offset: 2px;
+diff --git a/docs/QA-TEST-PLAN.md b/docs/QA-TEST-PLAN.md
+index 8ac789f..9cd051b 100644
+--- a/docs/QA-TEST-PLAN.md
++++ b/docs/QA-TEST-PLAN.md
+@@ -19,7 +19,6 @@ The four bugs and their regression IDs:
+ | `chrome.storage.sync` write-quota exhaustion (120 writes/min) from dragging a settings slider | `SET-05` |
+ | Wrong-site deletion race when deleting two sites in quick succession | `CRUD-09` |
+ | CSP-blocked inline event handler (MV3's default CSP silently blocks `onclick="…"` attributes — the control looks dead, no visible error unless the console is open) | `CC-05` |
+-| Chat overlay permanently covering the blocked page (the Bao overlay rendered full-viewport with no close mechanism, so Start/Pause/Reset/Skip were unreachable; fixed in v1.1.0 by hiding it behind a launcher) | `UI-06` |
+ 
+ ---
+ 
+@@ -200,13 +199,12 @@ Tip: For any case requiring a full phase or cycle, first set short durations in
+ 
+ ---
+ 
+-## 8. Two-Tab Popup, Flip Clock & Chat Overlay (v1.1.0 UI)
++## 8. Two-Tab Popup & Flip Clock (v1.1.0 UI)
+ 
+ Covers the v1.1.0 redesign: the popup is segmented into a **Blocklist** tab
+ and a **Timer** tab, the blocked page renders the countdown as a split-flap
+-**flip clock**, the Bao chat overlay is hidden behind a floating launcher,
+-and the popup's Timer tab shares one timer state with the blocked page via
+-`chrome.storage.local["focusguard_timer_state"]`.
++**flip clock**, and the popup's Timer tab shares one timer state with the
++blocked page via `chrome.storage.local["focusguard_timer_state"]`.
+ 
+ | ID | Case | Steps | Expected |
+ |---|---|---|---|
+@@ -215,9 +213,7 @@ and the popup's Timer tab shares one timer state with the blocked page via
+ | `UI-03` | Popup → blocked page timer sync | 1. In the popup Timer tab, click **Start**. 2. Click **Open full-screen timer**. 3. Watch the new tab. | The blocked page opens already running with the same phase/remaining time the popup showed — both surfaces read the same `focusguard_timer_state` key, so control passes between them without any message passing. Pause from either surface; the other reflects it within ~1s of its next storage event/reload. |
+ | `UI-04` | Blocked page → popup timer sync | 1. Start the timer on the blocked page. 2. Open the popup and switch to the Timer tab while the page keeps running. | The popup flip clock shows the running countdown (live-updating via `chrome.storage.onChanged`) and its Start button reflects the running state. Pausing in the popup pauses the blocked page's timer too. |
+ | `UI-05` | Flip clock rendering | On the blocked page, start the timer and watch several ticks including a minute rollover (e.g. `25:00 → 24:59`, and let it reach `24:00` or set a 1–2 min work duration). | Digits render as split-flap cards in Orbitron; on each tick only the digits that actually changed flip (at `25:00 → 24:59` the minutes-tens "2" stays static while the other three flip; at a minute rollover the minute cards flip once, not once per second). No layout shift during flips, and with OS "Reduce motion" enabled the digits swap instantly with no animation. |
+-| `UI-06` — **chat overlay regression (PRIMARY BUG)** | Chat launcher open/close | 1. On the blocked page, confirm the timer controls are clickable immediately (no overlay covering them). 2. Click the floating 🐼 button (bottom-right). 3. Click the minimized timer strip at the top of the overlay. 4. Reopen and try the chat input. | The overlay is hidden at load; the launcher opens it (focus moves to the chat input); the timer strip closes it again. While closed, Start/Pause/Reset/Skip all respond to clicks. The timer strip keeps live-updating while the overlay is open. |
+-| `UI-07` | Space toggles the timer | 1. On the blocked page with nothing focused (click the background first), press **Space**. 2. Press Space again. 3. Open the chat overlay via the launcher and press Space with the chat input focused. | Steps 1–2: timer starts then pauses (same as clicking Start). Step 3: nothing happens — Space is ignored while typing in the chat input or while the overlay is open. Space also never scrolls the page. |
+-| `UI-08` | Escape closes the chat | Open the chat overlay via the launcher, then press **Escape**. | The overlay closes and focus returns to the launcher button. Pressing Escape while the overlay is already closed does nothing. |
++| `UI-07` | Space toggles the timer | 1. On the blocked page with nothing focused (click the background first), press **Space**. 2. Press Space again. | The timer starts then pauses (same as clicking Start). Space never scrolls the page, and is ignored while focus is in a text field or on a button. |
+ | `UI-09` | Strip vs Block onboarding | 1. With an empty blocklist, open the Blocklist tab. 2. Add a site and inspect its card. 3. In the card's mode button, cycle it to `block` (friction level 3) and navigate to that domain. | The Blocklist tab shows a static hint explaining that sites start in **Strip** mode and that **Block** mode triggers the full-screen Pomodoro redirect. The new site's card shows mode `strip` by default and does **not** redirect when visited in strip mode; only after switching to `block` (level 3) does navigation redirect to the timer page. |
+ | `UI-10` | Minimalist theme + focus outlines | Keyboard-Tab through every control on both surfaces (see `CC-03`) and inspect the stylesheets. | Every keyboard-focused control shows a 2px outline with a 2px offset in the current phase color (shared `--focus-color` token). No surface uses hues beyond the three phase colors plus the semantic error red; the popup footer reads `FocusGuard v1.1.0`, matching `manifest.json`. |
+ 
+@@ -243,7 +239,6 @@ Full execution of all ~50 cases above is expensive; run this subset every releas
+ 6. `INST-02` — upgrade never clobbers an existing site list
+ 7. `BLK-01`, `BLK-02`, `BLK-05` — exact match, subdomain match, and the "contains but isn't a subdomain" non-match (the core matching correctness the whole extension depends on)
+ 8. `BLK-10`, `BLK-11` — master toggle and per-site toggle both actually gate blocking
+-9. `UI-06` — chat overlay must not cover the timer controls (v1.1.0 regression)
+-10. `UI-03`, `UI-04` — popup ↔ blocked page stay in agreement on the shared timer state
++9. `UI-03`, `UI-04` — popup ↔ blocked page stay in agreement on the shared timer state
+ 
+-If all ten pass with a clean console, the release is safe to ship pending the rest of the suite at normal cadence (e.g. before a major version bump, or after any change touching `background.js`, `lib/matcher.js`, `lib/domain.js`, or the storage schema).
++If all nine pass with a clean console, the release is safe to ship pending the rest of the suite at normal cadence (e.g. before a major version bump, or after any change touching `background.js`, `lib/matcher.js`, `lib/domain.js`, or the storage schema).
+diff --git a/docs/research-product-roadmap.md b/docs/research-product-roadmap.md
+index a20143d..a713514 100644
+--- a/docs/research-product-roadmap.md
++++ b/docs/research-product-roadmap.md
+@@ -21,7 +21,7 @@ Given the strategic market analysis of the productivity site-blocker and parenta
+ 
+ ## Summary
+ 
+-FocusGuard v1.0.0 is a well-architected MV3 Chrome extension with **binary domain blocking + Pomodoro timer replacement + on-device AI chat (Bao the panda)**. It has strong privacy fundamentals (zero network requests, self-hosted fonts, local letter avatars) and clean module boundaries. However, it occupies only the most basic tier of the market — simple browser-bound extension with domain-level blocking — while the market research reveals **five high-value unaddressed opportunities**: surgical DOM manipulation, progressive psychological friction, context-aware AI intent, enterprise anti-circumvention, and privacy-first family co-pilot mode.
++FocusGuard v1.0.0 is a well-architected MV3 Chrome extension with **binary domain blocking + Pomodoro timer replacement**. It has strong privacy fundamentals (zero network requests, self-hosted fonts, local letter avatars) and clean module boundaries. However, it occupies only the most basic tier of the market — simple browser-bound extension with domain-level blocking — while the market research reveals **five high-value unaddressed opportunities**: surgical DOM manipulation, progressive psychological friction, context-aware AI intent, enterprise anti-circumvention, and privacy-first family co-pilot mode.
+ 
+ ## Detailed Findings
+ 
+@@ -35,7 +35,6 @@ FocusGuard v1.0.0 is a well-architected MV3 Chrome extension with **binary domai
+ | Domain matching | Exact + subdomain matching, www-stripped, case-insensitive | `lib/matcher.js:31-56` |
+ | Domain validation | ASCII-only regex, 2+ label requirement | `lib/domain.js:13-44` |
+ | Pomodoro timer | Full state machine with persistence, audio, phase transitions | `lib/timer.js`, `blocked/blocked.js` |
+-| AI chat (Bao) | Chrome Prompt API (Gemini Nano), streaming, mood escalation, fallback snark | `lib/panda-agent.js`, `blocked/blocked-chat.js` |
+ | Popup UI | Site list management, master toggle, Pomodoro settings sliders | `popup/popup.js` |
+ | Storage | `sync` for settings/sites, `local` for timer state | Throughout |
+ | Privacy | Zero network requests, self-hosted fonts, local avatars | `manifest.json`, `popup/popup.js:253-264` |
+@@ -55,7 +54,6 @@ FocusGuard v1.0.0 is a well-architected MV3 Chrome extension with **binary domai
+ - No friction/delay mechanism → binary redirect, no breathing prompt or intention logging
+ - No enterprise policy integration → trivially bypassable via chrome://extensions
+ - No multi-device sync beyond chrome.storage.sync's built-in profile sync
+-- AI is used only for chat personality, not for intent classification
+ 
+ ### Gap Analysis: Market Opportunities vs. Current State
+ 
+@@ -77,7 +75,7 @@ FocusGuard v1.0.0 is a well-architected MV3 Chrome extension with **binary domai
+ 
+ **Market signal:** one sec (backed by Max Planck Institute research) pioneered mindful delays. Users want habit-loop disruption without total bans. Re-intervention timers prevent passive doomscrolling.
+ 
+-**Current state:** FocusGuard does an immediate hard redirect to the timer page. No breathing exercise, no intention logging, no graduated response. The Bao chat provides post-hoc guilt-tripping but not pre-access friction.
++**Current state:** FocusGuard does an immediate hard redirect to the timer page. No breathing exercise, no intention logging, no graduated response.
+ 
+ **What's needed:**
+ - Interstitial overlay before redirect: breathing animation, intention entry prompt
+@@ -91,14 +89,14 @@ FocusGuard v1.0.0 is a well-architected MV3 Chrome extension with **binary domai
+ 
+ **Market signal:** The market research identifies a "context-aware AI intent engine" using localized small language models as a key differentiator. Evaluate user intent on navigation — grant access for productive queries, strip elements for unstructured browsing.
+ 
+-**Current state:** FocusGuard already integrates Chrome's Prompt API (Gemini Nano) for the Bao chat. The AI infrastructure (`lib/panda-agent.js`) exists but is used only for personality-driven conversation, not intent classification.
++**Current state:** FocusGuard has no on-device AI integration. Intent classification is URL-pattern heuristics only (`lib/intent-classifier.js`).
+ 
+ **What's needed:**
+-- Repurpose Prompt API for intent classification: analyze URL + page context to determine productive vs. distracting intent
++- Integrate Chrome's Prompt API for intent classification: analyze URL + page context to determine productive vs. distracting intent
+ - Intent-aware routing: productive intent → allow with stripped DOM; distracting intent → apply friction or block
+ - Could leverage Chrome's built-in AI for on-device classification without network requests (aligns with privacy-first positioning)
+ 
+-**Effort estimate:** Medium — AI infrastructure exists, but intent classification prompt engineering and integration with navigation flow needs design.
++**Effort estimate:** Medium — the Prompt API integration needs to be built from scratch, and intent classification prompt engineering and integration with the navigation flow need design.
+ 
+ #### GAP 4: Enterprise Anti-Circumvention (MEDIUM PRIORITY)
+ 
+@@ -146,7 +144,7 @@ FocusGuard v1.0.0 is a well-architected MV3 Chrome extension with **binary domai
+ 
+ | Tier | Target | Price | Features |
+ |------|--------|-------|----------|
+-| **Free Core** | Everyday users, students | $0 | Surgical YouTube DOM stripping, basic 1-site breathing delays, Bao chat, zero data logging |
++| **Free Core** | Everyday users, students | $0 | Surgical YouTube DOM stripping, basic 1-site breathing delays, zero data logging |
+ | **Pro Focus** | Professionals, power users | $4.99/mo or $39.99/yr | Full AI intent engine, multi-site DOM stripping, progressive friction matrix, scheduling |
+ | **Pro Lifetime** | Subscription-averse | $79 one-time | All Pro features, perpetual updates, enterprise anti-bypass script |
+ | **Family Co-Pilot** | Parents | $6.99/mo or $59.99/yr | Local CV explicit media redaction, device pause schedules, multi-device management |
+@@ -156,11 +154,7 @@ FocusGuard v1.0.0 is a well-architected MV3 Chrome extension with **binary domai
+ - `background.js:70-97` — Navigation interception (needs content script registration for DOM stripping)
+ - `background.js:21-47` — Hot-path cache (would need schedule-aware cache for time-based blocking)
+ - `lib/matcher.js:31-56` — Site matching (needs URL path and pattern matching for surgical rules)
+-- `lib/panda-agent.js:41-56` — AI availability check (could be repurposed for intent classification)
+-- `lib/panda-agent.js:65-78` — Session creation (pattern for creating intent-classifier sessions)
+ - `lib/timer.js` — Timer state machine (friction engine could wrap this with delay phases)
+-- `blocked/blocked-chat.js` — Streaming AI chat UI (pattern for breathing/friction overlay UI)
+-- `blocked/blocked.js:488-497` — Timer API exposed to other modules (extension point for friction engine)
+ - `popup/popup.js:34-56` — Site mutation queue (pattern for managing stripping profiles)
+ - `manifest.json` — Missing: `content_scripts`, `activeTab`, `scripting` permissions needed for DOM work
+ 
+@@ -168,7 +162,7 @@ FocusGuard v1.0.0 is a well-architected MV3 Chrome extension with **binary domai
+ 
+ 1. **Content script gap is the critical architectural missing piece.** The extension has no content scripts at all. Every high-priority feature (DOM stripping, friction overlays on live pages, intent-aware browsing) requires content script infrastructure. This should be the first architectural addition.
+ 
+-2. **The existing AI infrastructure is a strategic asset.** Having Gemini Nano integration already working (with availability detection, session management, streaming, and fallback) puts FocusGuard ahead of most competitors for adding an intent engine. The Prompt API integration can be extended from "personality chat" to "intent classifier" with a new system prompt and different session configuration.
++2. **An on-device intent engine requires new AI infrastructure.** FocusGuard ships no AI integration today; a Prompt API (Gemini Nano) layer — availability detection, session management, streaming, and fallback — would need to be built from scratch to power an intent classifier. Keeping it on-device preserves the zero-network privacy guarantee.
+ 
+ 3. **The blocked page can evolve into a friction interstitial.** The current full-screen Pomodoro timer page can be repurposed as a progressive friction surface — adding a breathing delay layer before the timer, and a re-intervention overlay that can appear on the actual target site (via content script) during browsing.
+ 
+diff --git a/manifest.json b/manifest.json
+index 9262836..5478a52 100644
+--- a/manifest.json
++++ b/manifest.json
+@@ -2,7 +2,6 @@
+   "manifest_version": 3,
+   "name": "FocusGuard",
+   "version": "1.1.0",
+-  "minimum_chrome_version": "138",
+   "description": "Block distracting websites and replace them with a beautiful Pomodoro timer to help you stay focused.",
+   "permissions": [
+     "storage",
+@@ -43,11 +42,8 @@
+         "blocked/blocked.html",
+         "blocked/blocked.css",
+         "blocked/blocked.js",
+-        "blocked/blocked-chat.js",
+-        "blocked/blocked-chat.css",
+         "blocked/breathing.html",
+-        "blocked/breathing.js",
+-        "lib/panda-agent.js"
++        "blocked/breathing.js"
+       ],
+       "matches": ["<all_urls>"]
+     }
+diff --git a/popup/popup.css b/popup/popup.css
+index 42a9afb..9aea205 100644
+--- a/popup/popup.css
++++ b/popup/popup.css
+@@ -721,8 +721,7 @@ body {
+ 
+ /* ── Focus Visibility ─────────────── */
+ /* Every interactive element: 2px outline, 2px offset, shared token
+-   (--focus-color, see shared/theme.css). Consistent with blocked.css
+-   and blocked-chat.css. */
++   (--focus-color, see shared/theme.css). Consistent with blocked.css. */
+ .btn-add:focus-visible,
+ .btn-delete:focus-visible,
+ .settings-toggle:focus-visible,
+diff --git a/shared/theme.css b/shared/theme.css
+index 730c40a..1a4d2ab 100644
+--- a/shared/theme.css
++++ b/shared/theme.css
+@@ -1,7 +1,7 @@
+ /* ═══════════════════════════════════════════════════════
+    FocusGuard — Shared Theme Tokens
+    ONE token sheet for every surface (blocked page, popup,
+-   chat overlay, flip clock, breathing page). Minimalist
++   flip clock, breathing page). Minimalist
+    direction: near-black base, one neutral elevated surface,
+    flat planes, hairline borders, no glow bloom. The three
+    phase colors are the ONLY accent hues in the system.

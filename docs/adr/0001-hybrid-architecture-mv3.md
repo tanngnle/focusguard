@@ -1,4 +1,4 @@
-# ADR-0001: Hybrid Architecture for MV3 Chrome Extension
+﻿# ADR-0001: Hybrid Architecture for MV3 Chrome Extension
 
 ## Status
 
@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-FocusGuard v1.0.0 uses binary domain blocking with no content scripts. The product roadmap requires adding surgical DOM stripping, progressive friction, and AI intent classification. Each feature has different injection requirements:
+MindfulBrowse v1.0.0 uses binary domain blocking with no content scripts. The product roadmap requires adding surgical DOM stripping, progressive friction, and AI intent classification. Each feature has different injection requirements:
 
 - **Stripping** needs to run on every page load for monitored platforms (always-on)
 - **Friction overlays** need to appear conditionally based on user behavior (on-demand)
@@ -52,4 +52,4 @@ Additionally:
 
 - Unhook extension (1M+ users): uses declarative content scripts for YouTube stripping
 - Chrome MV3 documentation: content scripts vs programmatic injection
-- FocusGuard wayfinder ticket #2: Content script injection strategy
+- MindfulBrowse wayfinder ticket #2: Content script injection strategy

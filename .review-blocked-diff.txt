@@ -1,0 +1,141 @@
+commit a807aeec748cc9325dfdcd210deec13e1d33e7e8
+Author: tanngnle <120621197+tanngnle@users.noreply.github.com>
+Date:   Sat Aug 22 15:06:48 2026 +0700
+
+    Remove AI implementation (Bao on-device chat)
+    
+    User decision to drop the AI implementation entirely. The only AI in the project was the Bao on-device panda chat (Chrome Prompt API / Gemini Nano), so this removes it root and branch:
+    
+    - Delete lib/panda-agent.js (Prompt API agent), blocked/blocked-chat.js and blocked/blocked-chat.css (chat overlay), and tests/lib/panda-agent.test.js
+    
+    - Remove chat overlay markup and launcher from blocked/blocked.html, and the chat-coupled pieces from blocked/blocked.js (Space-overlay guard, window.__focusguardTimer API exposed for the chat's timer strip, panda-chat-active particle throttle)
+    
+    - Revert manifest additions made for the AI: minimum_chrome_version 138 and the blocked-chat/panda-agent web_accessible_resources entries
+    
+    - Update blocked-page tests: drop chat-overlay suites, assert via DOM/storage instead of the removed __focusguardTimer hook, and move keyboard-shortcut tests to their own file (document-level listeners accumulate across mounts within one jsdom file)
+    
+    - Scrub Bao/chat references from README.md, CONTEXT.md, docs/QA-TEST-PLAN.md, docs/research-product-roadmap.md and stale CSS/HTML comments
+    
+    Kept intact: Pomodoro blocked page, breathing page, DOM stripping, friction engine, popup, and the heuristic-only intent classifier (no AI model involved). The extension still makes zero network requests.
+    
+    Verification: npx vitest run -> 12 files / 203 tests passed (baseline was 222; removed suites covered only the AI feature). npx eslint . -> 0 errors, 10 pre-existing warnings unchanged from master.
+
+diff --git a/blocked/blocked.html b/blocked/blocked.html
+index f187ae1..dc826e5 100644
+--- a/blocked/blocked.html
++++ b/blocked/blocked.html
+@@ -8,7 +8,6 @@
+   <link rel="stylesheet" href="../shared/theme.css">
+   <link rel="stylesheet" href="../lib/flip-clock.css">
+   <link rel="stylesheet" href="blocked.css">
+-  <link rel="stylesheet" href="blocked-chat.css">
+ </head>
+ <body>
+   <!-- Animated background -->
+@@ -53,10 +52,9 @@
+           </defs>
+         </svg>
+         <div class="timer-display">
+-          <!-- Visually hidden (CSS) but kept in the DOM: it backs
+-               window.__focusguardTimer.getDisplay() and stays the source
+-               of truth for the timer strip. The flip clock below is the
+-               visual readout. -->
++          <!-- Visually hidden (CSS) but kept in the DOM: it stays the
++               source of truth for the timer readout. The flip clock
++               below is the visual display. -->
+           <span class="timer-digits" id="timer-digits" aria-hidden="true">25:00</span>
+           <div id="flip-clock" aria-hidden="true"></div>
+           <span class="timer-phase-label" id="timer-phase-label">WORK</span>
+@@ -111,34 +109,6 @@
+     <p class="motivation" id="motivation">Great things are done by a series of small things brought together.</p>
+   </main>
+ 
+-  <!-- AI Panda Chat Overlay -->
+-  <div class="chat-overlay" id="chat-overlay">
+-    <div class="timer-strip" id="timer-strip"></div>
+-    <div class="chat-container" id="chat-container">
+-      <div class="chat-header">
+-        <span class="panda-avatar" aria-hidden="true">🐼</span>
+-        <div class="panda-info">
+-          <span class="panda-name">Bao</span>
+-          <span class="panda-mood" id="panda-mood">judging you…</span>
+-        </div>
+-      </div>
+-      <div class="chat-messages" id="chat-messages" role="log" aria-live="polite"></div>
+-      <div class="chat-input-area" id="chat-input-area">
+-        <input type="text" id="chat-input" class="chat-input" placeholder="Try to explain yourself…" autocomplete="off">
+-        <button id="chat-send-btn" aria-label="Send message">
+-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+-            <line x1="22" y1="2" x2="11" y2="13"></line>
+-            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+-          </svg>
+-        </button>
+-      </div>
+-    </div>
+-  </div>
+-
+-  <!-- Floating launcher for the Bao chat overlay (hidden by default) -->
+-  <button id="chat-launcher" aria-label="Talk to Bao the panda">🐼</button>
+-
+   <script type="module" src="blocked.js"></script>
+-  <script type="module" src="blocked-chat.js"></script>
+ </body>
+ </html>
+diff --git a/blocked/blocked.js b/blocked/blocked.js
+index 703580e..cf24164 100644
+--- a/blocked/blocked.js
++++ b/blocked/blocked.js
+@@ -95,8 +95,8 @@ document.addEventListener("DOMContentLoaded", async () => {
+ 
+   timerState = initialState(settings);
+ 
+-  // Mount the flip clock (visual readout). #timer-digits stays the source
+-  // of truth for window.__focusguardTimer.getDisplay().
++  // Mount the flip clock (visual readout). #timer-digits stays the
++  // canonical text source that the flip clock mirrors.
+   if (flipClockMount) {
+     flipClock = createFlipClock(flipClockMount);
+   }
+@@ -168,7 +168,6 @@ function toggleTimer() {
+ //  - typing contexts (input/textarea/select) keep Space as a character
+ //  - a focused button already activates on Space — skipping prevents a
+ //    double toggle from the same keypress
+-//  - while the Bao chat overlay is open, Space belongs to the chat
+ function isTypingContext() {
+   const el = document.activeElement;
+   if (!el || !el.tagName) return false;
+@@ -184,8 +183,6 @@ document.addEventListener("keydown", (e) => {
+   if (e.key !== " " && e.code !== "Space") return;
+   if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+   if (isTypingContext()) return;
+-  const overlay = document.getElementById("chat-overlay");
+-  if (overlay && overlay.classList.contains("open")) return;
+ 
+   e.preventDefault(); // stop page scroll / late button activation
+   toggleTimer();
+@@ -550,25 +547,3 @@ function createParticles() {
+     container.appendChild(particle);
+   }
+ }
+-
+-// ── Timer API (for chat overlay) ───────────────────────
+-// Expose minimal timer state so the chat overlay's minimized timer strip
+-// can display the current time/phase without duplicating timer logic.
+-window.__focusguardTimer = {
+-  getDisplay: () => timerDigits.textContent,
+-  getPhase: () => timerState.phase,
+-  isRunning: () => timerState.isRunning,
+-  getProgress: () => {
+-    const now = Date.now();
+-    const remaining = remainingSeconds(timerState, now);
+-    return timerState.totalTime > 0 ? remaining / timerState.totalTime : 1;
+-  },
+-};
+-
+-// Reduce particles when the chat overlay is active to free GPU budget.
+-document.addEventListener("panda-chat-active", () => {
+-  const particles = document.querySelectorAll(".particle");
+-  particles.forEach((p, i) => {
+-    if (i % 2 !== 0) p.style.display = "none";
+-  });
+-});

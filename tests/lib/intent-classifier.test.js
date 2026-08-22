@@ -1,5 +1,5 @@
-/*  ═══════════════════════════════════════════════════════
-    FocusGuard — Intent Classifier Tests
+﻿/*  ═══════════════════════════════════════════════════════
+    MindfulBrowse — Intent Classifier Tests
     Tests for URL pattern heuristics and intent classification
     ═══════════════════════════════════════════════════════ */
 

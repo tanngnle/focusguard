@@ -1,5 +1,5 @@
-/*  ══════════════════════════════════════════════════════
-    FocusGuard — Re-intervention Overlay (Content Script)
+﻿/*  ══════════════════════════════════════════════════════
+    MindfulBrowse — Re-intervention Overlay (Content Script)
     Level 2 friction: periodic modal during browsing
     ═══════════════════════════════════════════════════════ */
 
@@ -14,20 +14,20 @@ let startTime = Date.now();
 // ── Overlay HTML ────────────────────────────────────────
 function createOverlay() {
   const overlay = document.createElement("div");
-  overlay.id = "focusguard-reintervention-overlay";
+  overlay.id = "MindfulBrowse-reintervention-overlay";
   overlay.innerHTML = `
-    <div class="focusguard-overlay-backdrop"></div>
-    <div class="focusguard-overlay-modal">
-      <div class="focusguard-overlay-emoji"></div>
-      <h2 class="focusguard-overlay-title">Still being productive?</h2>
-      <p class="focusguard-overlay-text">
+    <div class="MindfulBrowse-overlay-backdrop"></div>
+    <div class="MindfulBrowse-overlay-modal">
+      <div class="MindfulBrowse-overlay-emoji"></div>
+      <h2 class="MindfulBrowse-overlay-title">Still being productive?</h2>
+      <p class="MindfulBrowse-overlay-text">
         You've been browsing for a while. Take a moment to check in with yourself.
       </p>
-      <div class="focusguard-overlay-buttons">
-        <button class="focusguard-btn focusguard-btn-continue" id="focusguard-continue">
+      <div class="MindfulBrowse-overlay-buttons">
+        <button class="MindfulBrowse-btn MindfulBrowse-btn-continue" id="MindfulBrowse-continue">
           Yes, continue
         </button>
-        <button class="focusguard-btn focusguard-btn-close" id="focusguard-close">
+        <button class="MindfulBrowse-btn MindfulBrowse-btn-close" id="MindfulBrowse-close">
           Close tab
         </button>
       </div>
@@ -36,9 +36,9 @@ function createOverlay() {
 
   // Add styles
   const style = document.createElement("style");
-  style.id = "focusguard-overlay-styles";
+  style.id = "MindfulBrowse-overlay-styles";
   style.textContent = `
-    #focusguard-reintervention-overlay {
+    #MindfulBrowse-reintervention-overlay {
       position: fixed;
       top: 0;
       left: 0;
@@ -49,7 +49,7 @@ function createOverlay() {
       align-items: center;
       justify-content: center;
     }
-    .focusguard-overlay-backdrop {
+    .MindfulBrowse-overlay-backdrop {
       position: absolute;
       top: 0;
       left: 0;
@@ -57,7 +57,7 @@ function createOverlay() {
       bottom: 0;
       background: rgba(0, 0, 0, 0.7);
     }
-    .focusguard-overlay-modal {
+    .MindfulBrowse-overlay-modal {
       position: relative;
       background: #1a1a2e;
       border: 2px solid #a78bfa;
@@ -68,28 +68,28 @@ function createOverlay() {
       font-family: 'Inter', system-ui, sans-serif;
       color: #e4e4e7;
     }
-    .focusguard-overlay-emoji {
+    .MindfulBrowse-overlay-emoji {
       font-size: 3rem;
       margin-bottom: 1rem;
     }
-    .focusguard-overlay-title {
+    .MindfulBrowse-overlay-title {
       font-family: 'Orbitron', monospace;
       font-size: 1.25rem;
       color: #a78bfa;
       margin-bottom: 1rem;
     }
-    .focusguard-overlay-text {
+    .MindfulBrowse-overlay-text {
       font-size: 0.95rem;
       color: #a1a1aa;
       margin-bottom: 1.5rem;
       line-height: 1.5;
     }
-    .focusguard-overlay-buttons {
+    .MindfulBrowse-overlay-buttons {
       display: flex;
       gap: 1rem;
       justify-content: center;
     }
-    .focusguard-btn {
+    .MindfulBrowse-btn {
       padding: 0.75rem 1.5rem;
       border: none;
       border-radius: 0.5rem;
@@ -98,18 +98,18 @@ function createOverlay() {
       cursor: pointer;
       transition: all 0.2s ease;
     }
-    .focusguard-btn-continue {
+    .MindfulBrowse-btn-continue {
       background: #a78bfa;
       color: #1a1a2e;
     }
-    .focusguard-btn-continue:hover {
+    .MindfulBrowse-btn-continue:hover {
       background: #c4b5fd;
     }
-    .focusguard-btn-close {
+    .MindfulBrowse-btn-close {
       background: #3f3f46;
       color: #e4e4e7;
     }
-    .focusguard-btn-close:hover {
+    .MindfulBrowse-btn-close:hover {
       background: #52525b;
     }
   `;
@@ -118,8 +118,8 @@ function createOverlay() {
   document.body.appendChild(overlay);
 
   // Wire up buttons
-  document.getElementById("focusguard-continue").addEventListener("click", hideOverlay);
-  document.getElementById("focusguard-close").addEventListener("click", () => {
+  document.getElementById("MindfulBrowse-continue").addEventListener("click", hideOverlay);
+  document.getElementById("MindfulBrowse-close").addEventListener("click", () => {
     window.close();
   });
 
@@ -127,8 +127,8 @@ function createOverlay() {
 }
 
 function hideOverlay() {
-  const overlay = document.getElementById("focusguard-reintervention-overlay");
-  const styles = document.getElementById("focusguard-overlay-styles");
+  const overlay = document.getElementById("MindfulBrowse-reintervention-overlay");
+  const styles = document.getElementById("MindfulBrowse-overlay-styles");
   if (overlay) overlay.remove();
   if (styles) styles.remove();
   overlayVisible = false;
@@ -169,7 +169,7 @@ async function init() {
     const intervalMs = DEFAULT_INTERVAL_MS;
     startReInterventionTimer(intervalMs);
   } catch (err) {
-    console.error("FocusGuard re-intervention init failed:", err);
+    console.error("MindfulBrowse re-intervention init failed:", err);
   }
 }
 

@@ -1,9 +1,9 @@
-{
-  "name": "focusguard",
+﻿{
+  "name": "MindfulBrowse",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Test tooling for the FocusGuard Chrome extension. The extension itself stays buildless — this only supports linting and tests.",
+  "description": "Test tooling for the MindfulBrowse Chrome extension. The extension itself stays buildless — this only supports linting and tests.",
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
