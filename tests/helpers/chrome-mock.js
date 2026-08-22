@@ -70,6 +70,11 @@
  *     registered onInstalled listener with `details` and awaits all of them
  *     (Promise.all), so `await triggerOnInstalled()` only resolves once any
  *     async onInstalled work (e.g. the DEFAULTS-seeding write) has settled.
+ *   chrome.runtime.sendMessage -> vi.fn(() => Promise.resolve()) — inspect
+ *     outgoing messages via chrome.runtime.sendMessage.mock.calls.
+ *   chrome.runtime.onMessage.addListener(fn) / removeListener(fn)
+ *   triggerMessage(message, sender) fires every registered onMessage
+ *     listener with `(message, sender, sendResponse)` and awaits them.
  *
  * chrome.tabs
  * -----------
@@ -80,6 +85,9 @@
  *   chrome.tabs.create -> vi.fn((createProperties) => Promise)
  *     Default implementation resolves with `{ id: 9999, ...createProperties }`.
  *     Inspect calls via chrome.tabs.create.mock.calls.
+ *   chrome.tabs.remove -> vi.fn((tabId) => Promise)
+ *     Default implementation resolves with `undefined`, matching real Chrome.
+ *     Inspect calls via chrome.tabs.remove.mock.calls.
  *
  * chrome.webNavigation
  * --------------------
@@ -219,14 +227,21 @@ function buildMock() {
   };
 
   const onInstalledListeners = new Set();
+  const onMessageListeners = new Set();
   const runtime = {
     id: FAKE_EXTENSION_ID,
     getURL: (path) =>
       `chrome-extension://${FAKE_EXTENSION_ID}/${String(path ?? "").replace(/^\/+/, "")}`,
+    sendMessage: vi.fn(() => Promise.resolve()),
     onInstalled: {
       addListener: (fn) => onInstalledListeners.add(fn),
       removeListener: (fn) => onInstalledListeners.delete(fn),
       _listeners: onInstalledListeners,
+    },
+    onMessage: {
+      addListener: (fn) => onMessageListeners.add(fn),
+      removeListener: (fn) => onMessageListeners.delete(fn),
+      _listeners: onMessageListeners,
     },
   };
 
@@ -237,6 +252,7 @@ function buildMock() {
     create: vi.fn((createProperties) =>
       Promise.resolve({ id: 9999, ...createProperties })
     ),
+    remove: vi.fn(() => Promise.resolve()),
   };
 
   const onBeforeNavigateListeners = new Set();
@@ -298,6 +314,16 @@ export async function triggerNavigation({ url, frameId = 0, tabId = 1 } = {}) {
   const results = [];
   for (const fn of mock.webNavigation.onBeforeNavigate._listeners) {
     results.push(fn(details));
+  }
+  await Promise.all(results);
+}
+
+export async function triggerMessage(message, sender = {}) {
+  const mock = requireMock();
+  const sendResponse = () => {};
+  const results = [];
+  for (const fn of mock.runtime.onMessage._listeners) {
+    results.push(fn(message, sender, sendResponse));
   }
   await Promise.all(results);
 }

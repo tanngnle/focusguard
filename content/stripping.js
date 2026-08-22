@@ -39,75 +39,139 @@ function removeStrippingStyles() {
   }
 }
 
+// ── Site Matching ───────────────────────────────────────
+// Same domain semantics as lib/matcher.js: exact match or
+// subdomain, "www." stripped, case-insensitive.
+
+function findMatchingSite(hostname, sites) {
+  const currentDomain = hostname.replace(/^www\./, "").toLowerCase();
+  return sites.find((s) => {
+    const siteDomain = s.domain.replace(/^www\./, "").toLowerCase();
+    return (
+      siteDomain === currentDomain ||
+      currentDomain.endsWith("." + siteDomain)
+    );
+  });
+}
+
 // ── Apply Stripping ─────────────────────────────────────
-// Reads the stripping profile from storage and applies
-// the appropriate CSS rules. Falls back to default profile
-// (all elements hidden) if no profile is stored.
+// Reads config from storage and applies the appropriate
+// CSS rules. Gating order (all gates must pass):
+//   1. Master toggle (`enabled`) is not false
+//   2. The current domain is explicitly listed — unlisted
+//      sites are NEVER stripped, even on supported platforms
+//   3. The site entry is active
+//   4. Intervention mode resolves to "strip"
+// Stored stripping profiles are PARTIAL (the popup writes
+// only toggled keys), so they are merged over the platform
+// default profile before use.
 
 async function applyStripping() {
   const hostname = window.location.hostname;
 
   try {
-    const data = await chrome.storage.sync.get(["sites"]);
-    const sites = data.sites || [];
+    const data = await chrome.storage.sync.get(["enabled", "sites"]);
 
-    // Find the site entry for this domain
-    const site = sites.find((s) => {
-      const siteDomain = s.domain.replace(/^www\./, "").toLowerCase();
-      const currentDomain = hostname.replace(/^www\./, "").toLowerCase();
-      return (
-        siteDomain === currentDomain ||
-        currentDomain.endsWith("." + siteDomain)
-      );
-    });
-
-    // Check intervention mode
-    const interventionMode = site?.interventionMode || "strip";
-    if (interventionMode !== "strip") {
-      // Not in strip mode — don't apply stripping
+    // Gate 1: master toggle off → no stripping at all.
+    if (data.enabled === false) {
       removeStrippingStyles();
+      stopObserving();
       return;
     }
 
-    // Get stripping profile (use stored profile or default)
-    const profile = site?.strippingProfile || getDefaultProfile(hostname);
+    // Gate 2: site must be explicitly listed. No default-profile
+    // fallback — merely being a supported platform is not enough.
+    const site = findMatchingSite(hostname, data.sites || []);
+    if (!site) {
+      removeStrippingStyles();
+      stopObserving();
+      return;
+    }
+
+    // Gate 3: per-site active toggle.
+    if (site.active === false) {
+      removeStrippingStyles();
+      stopObserving();
+      return;
+    }
+
+    // Gate 4: intervention mode.
+    const interventionMode = site.interventionMode || "strip";
+    if (interventionMode !== "strip") {
+      removeStrippingStyles();
+      stopObserving();
+      return;
+    }
+
+    // Merge the stored (possibly partial) profile over the platform
+    // default so `undefined` keys resolve as enabled, exactly like the
+    // popup renders its toggles.
+    const profile = {
+      ...(getDefaultProfile(hostname) || {}),
+      ...(site.strippingProfile || {}),
+    };
     const selectors = getStrippingRules(hostname, profile);
 
     removeStrippingStyles();
     injectStrippingStyles(selectors);
+
+    // The injected stylesheet already covers nodes created later
+    // (CSS matches dynamically), so the observer only exists to
+    // re-inject if the style element itself gets removed (SPAs can
+    // wipe <head>). Nothing to observe when no rules were emitted.
+    if (selectors.length > 0) {
+      startObserving();
+    } else {
+      stopObserving();
+    }
   } catch (err) {
-    // Storage read failed — apply default profile as fallback
-    const profile = getDefaultProfile(hostname);
-    const selectors = getStrippingRules(hostname, profile);
+    // Storage read failed — fail open: without readable config we
+    // cannot verify the master toggle, so strip nothing.
     removeStrippingStyles();
-    injectStrippingStyles(selectors);
+    stopObserving();
   }
 }
 
-// ── Initialization ──────────────────────────────────────
-// Apply stripping on initial load. YouTube and Facebook are
-// SPAs that dynamically update content, so we also observe
-// DOM mutations to re-apply styles when new elements appear.
+// ── Mutation Observer ───────────────────────────────────
+// Connected only while stripping is actually active. The
+// callback skips all mutations as long as the style element
+// is present (the stylesheet already hides later-created SPA
+// nodes), so normal SPA churn costs one getElementById per
+// mutation batch instead of a full re-evaluation.
 
+let observer = null;
+let observing = false;
+
+function onDomMutation() {
+  if (document.getElementById("focusguard-stripping-styles")) return;
+  applyStripping();
+}
+
+function startObserving() {
+  if (observing) return;
+  if (!observer) {
+    observer = new MutationObserver(onDomMutation);
+  }
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+  });
+  observing = true;
+}
+
+function stopObserving() {
+  if (!observing) return;
+  if (observer) observer.disconnect();
+  observing = false;
+}
+
+// ── Initialization ──────────────────────────────────────
 applyStripping();
 
-// Observe DOM mutations for SPA navigation
-const observer = new MutationObserver(() => {
-  // Debounce: only re-apply if styles are missing or DOM changed significantly
-  const existing = document.getElementById("focusguard-stripping-styles");
-  if (!existing) {
-    applyStripping();
-  }
-});
-
-observer.observe(document.documentElement, {
-  childList: true,
-  subtree: true,
-});
-
-// Listen for storage changes (profile updates from popup)
+// Listen for storage changes (profile updates from popup, or the
+// master toggle flipping) — re-evaluate on either key.
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === "sync" && changes.sites) {
+  if (areaName === "sync" && (changes.sites || changes.enabled)) {
     applyStripping();
   }
 });
