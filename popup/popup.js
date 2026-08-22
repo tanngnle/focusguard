@@ -5,7 +5,6 @@
 
 import { normalizeDomain, isValidDomain, isBuiltinSite, getBuiltinSite } from "../lib/domain.js";
 import { getAvailableElements } from "../lib/stripping-rules.js";
-import { getFrictionConfig } from "../lib/friction-rules.js";
 import {
   start,
   pause,
@@ -122,6 +121,17 @@ let hasStoredTimerState = false;
 
 const PHASE_LABELS = { work: "WORK", shortBreak: "BREAK", longBreak: "LONG BREAK" };
 const TAB_STORAGE_KEY = "MindfulBrowse_active_tab";
+
+// Friction mode has a single fixed delay (ticket #23) — no user-facing
+// delay picker anymore. Persisted alongside restrictionLevel: 'friction'.
+const FRICTION_DELAY_SECONDS = 15;
+
+// The three restriction levels, in dropdown order: [value, label].
+const RESTRICTION_LEVELS = [
+  ["strip", "Strip"],
+  ["friction", "Friction"],
+  ["block", "Block"],
+];
 
 // ── Init ────────────────────────────────────────────────
 async function init() {
@@ -677,53 +687,51 @@ function buildSiteCard(site) {
     </svg>
   `;
 
-  // ── Intervention Mode Toggle ──────────────────────────
-  // Strip (default) vs Block. Shown as a clickable button
-  // that cycles between modes.
-  const restrictionLevel = site.restrictionLevel || site.interventionMode || "strip";
-  const modeToggle = document.createElement("div");
-  modeToggle.className = "intervention-mode-toggle";
-  const modeButton = document.createElement("button");
-  modeButton.className = "mode-button";
-  modeButton.title = `Current mode: ${restrictionLevel}. Click to toggle.`;
-  modeButton.setAttribute("aria-label", `Restriction level for ${site.domain}`);
-  const modeValue = document.createElement("span");
-  modeValue.className = "mode-value";
-  modeValue.textContent = restrictionLevel;
-  modeButton.appendChild(modeValue);
-  modeToggle.appendChild(modeButton);
+  // ── Restriction Level Dropdown ────────────────────────
+  // Strip / Friction / Block in a native <select>. The .restriction-field
+  // wrapper hosts a pure-CSS tooltip (popup.css) that describes the
+  // currently selected level on hover — no JavaScript involved.
+  const restrictionLevel = site.restrictionLevel || "strip";
+  const restrictionField = document.createElement("div");
+  restrictionField.className = "restriction-field";
+
+  const restrictionSelect = document.createElement("select");
+  restrictionSelect.className = "restriction-select";
+  restrictionSelect.setAttribute("aria-label", `Restriction level for ${site.domain}`);
+  RESTRICTION_LEVELS.forEach(([value, label]) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    restrictionSelect.appendChild(option);
+  });
+  restrictionSelect.value = restrictionLevel;
+
+  // Empty span — its text is injected by CSS (::before content keyed off
+  // :has(option:checked)), so it carries no accessible name of its own.
+  const tooltip = document.createElement("span");
+  tooltip.className = "restriction-tooltip";
+  tooltip.setAttribute("aria-hidden", "true");
+
+  restrictionField.appendChild(restrictionSelect);
+  restrictionField.appendChild(tooltip);
 
   card.appendChild(favicon);
   card.appendChild(domainLabel);
   card.appendChild(toggleLabel);
-  card.appendChild(modeToggle);
+  card.appendChild(restrictionField);
   // Built-in sites cannot be deleted — skip the delete button
   if (!builtin) {
     card.appendChild(deleteBtn);
   }
 
-  // ─ Friction Delay Selector ───────────────────────────
-  // Only shown when in friction mode.
+  // ─ Friction Delay Note ────────────────────────────────
+  // Friction delay is fixed at 15s (ticket #23) — static text only,
+  // no selector. Only shown while in friction mode.
   if (restrictionLevel === "friction") {
-    const frictionDelay = site.frictionDelay || 10;
-    const frictionSelect = document.createElement("select");
-    frictionSelect.className = "friction-level-select";
-    frictionSelect.setAttribute("aria-label", `Friction delay for ${site.domain}`);
-  
-    [5, 30, 60].forEach((secs) => {
-      const option = document.createElement("option");
-      option.value = secs;
-      option.textContent = `${secs} seconds`;
-      option.selected = secs === frictionDelay;
-      frictionSelect.appendChild(option);
-    });
-  
-    frictionSelect.addEventListener("change", () => {
-      const delay = parseInt(frictionSelect.value);
-      queueSiteMutation(() => setFrictionDelay(site.domain, delay));
-    });
-  
-    card.appendChild(frictionSelect);
+    const delayNote = document.createElement("p");
+    delayNote.className = "friction-delay-note";
+    delayNote.textContent = `Delay: ${FRICTION_DELAY_SECONDS} seconds`;
+    card.appendChild(delayNote);
   }
 
   // ── Element-Level Toggles (Stripping Profile) ─────────
@@ -754,7 +762,7 @@ function buildSiteCard(site) {
       elementToggles.appendChild(label);
 
       checkbox.addEventListener("change", () => {
-        const enabled = checkbox.checked; // eager capture — see frictionSelect above
+        const enabled = checkbox.checked; // eager capture — see restrictionSelect below
         queueSiteMutation(() => toggleElement(site.domain, elementName, enabled));
       });
     });
@@ -774,10 +782,13 @@ function buildSiteCard(site) {
     queueSiteMutation(() => toggleSite(site.domain, active));
   });
 
-  // Restriction level handler — cycles between strip, friction, and block
-  modeButton.addEventListener("click", () =>
-    queueSiteMutation(() => toggleRestrictionLevel(site.domain, restrictionLevel))
-  );
+  // Restriction level handler — the chosen level is captured eagerly at
+  // event time (same rationale as the site toggle above) and persisted
+  // through the mutation queue.
+  restrictionSelect.addEventListener("change", () => {
+    const level = restrictionSelect.value;
+    queueSiteMutation(() => setRestrictionLevel(site.domain, level));
+  });
 
   // Delete handler — keyed by domain, not index (see removeSite), and
   // queued (see queueSiteMutation) so two rapid deletes can't race.
@@ -840,20 +851,22 @@ async function removeSite(domain) {
   renderSites(sites);
 }
 
-// ── Toggle Restriction Level ────────────────────────────
-// Cycles between 'strip', 'friction', and 'block' modes for a site.
-async function toggleRestrictionLevel(domain, currentLevel) {
+// ── Set Restriction Level ───────────────────────────────
+// Persists the dropdown's chosen level for a site. Friction carries the
+// fixed 15s delay; every other level drops frictionDelay so no stale
+// value lingers in storage.
+async function setRestrictionLevel(domain, level) {
   const data = await chrome.storage.sync.get(["sites"]);
   const sites = data.sites || [];
   const site = sites.find((s) => s.domain === domain);
   if (!site) return;
 
-  const cycle = { strip: "friction", friction: "block", block: "strip" };
-  site.restrictionLevel = cycle[currentLevel] || "strip";
-  // Clean up old keys
-  delete site.interventionMode;
-  delete site.frictionLevel;
-  if (site.restrictionLevel !== "friction") delete site.frictionDelay;
+  site.restrictionLevel = level;
+  if (level === "friction") {
+    site.frictionDelay = FRICTION_DELAY_SECONDS;
+  } else {
+    delete site.frictionDelay;
+  }
   suppressNextSitesChange = true;
   const ok = await setStorage({ sites });
   if (!ok) {
@@ -878,22 +891,6 @@ async function toggleElement(domain, elementName, enabled) {
   }
   site.strippingProfile[elementName] = enabled;
 
-  suppressNextSitesChange = true;
-  const ok = await setStorage({ sites });
-  if (!ok) {
-    suppressNextSitesChange = false;
-  }
-}
-
-// ─ Set Friction Delay ──────────────────────────────────
-// Updates the friction delay in seconds for a site.
-async function setFrictionDelay(domain, delay) {
-  const data = await chrome.storage.sync.get(["sites"]);
-  const sites = data.sites || [];
-  const site = sites.find((s) => s.domain === domain);
-  if (!site) return;
-
-  site.frictionDelay = delay;
   suppressNextSitesChange = true;
   const ok = await setStorage({ sites });
   if (!ok) {

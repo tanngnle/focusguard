@@ -301,6 +301,7 @@ body {
 /* ── Site Card ────────────────────── */
 .site-card {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
@@ -442,6 +443,147 @@ body {
 .btn-delete:hover {
   background: rgba(255, 71, 87, 0.15);
   color: var(--danger);
+}
+
+/* ── Restriction Dropdown (Strip / Friction / Block) ── */
+/* Native <select> wrapped in .restriction-field, which hosts a
+   pure-CSS tooltip: :has() inspects the currently selected
+   <option> and injects the matching description via ::before
+   content on hover. No JavaScript involved (Chrome-only :has()). */
+.restriction-field {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.restriction-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 5px 24px 5px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition);
+}
+
+.restriction-select:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-accent);
+}
+
+/* Custom chevron — the wrapper paints it over the native arrow. */
+.restriction-field::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  width: 5px;
+  height: 5px;
+  border-right: 1.5px solid var(--text-secondary);
+  border-bottom: 1.5px solid var(--text-secondary);
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+}
+
+/* Tooltip bubble — hidden until the field is hovered (or keyboard-
+   focused); its text comes from the :has() rules below. Positioned
+   below the control so the scrollable sites list never clips it. */
+.restriction-tooltip {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(-3px);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 30;
+  padding: 6px 10px;
+  background: var(--surface-hover);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  transition: opacity var(--transition), transform var(--transition), visibility var(--transition);
+}
+
+/* Caret pointing up at the select. */
+.restriction-tooltip::after {
+  content: '';
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-bottom-color: var(--surface-hover);
+}
+
+.restriction-field:hover .restriction-tooltip,
+.restriction-field:focus-within .restriction-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* The actual tooltip copy — keyed off the selected option. */
+.restriction-field:has(.restriction-select option[value="strip"]:checked) .restriction-tooltip::before {
+  content: '3s breathing + hide distractions';
+}
+
+.restriction-field:has(.restriction-select option[value="friction"]:checked) .restriction-tooltip::before {
+  content: '15s delay + intention';
+}
+
+.restriction-field:has(.restriction-select option[value="block"]:checked) .restriction-tooltip::before {
+  content: 'Redirect to timer';
+}
+
+/* ── Friction delay note (fixed 15s) ── */
+.friction-delay-note {
+  flex-basis: 100%;
+  margin: -4px 0 0;
+  padding-left: 30px; /* align with the domain label */
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* ── Element-Level Toggles (stripping profile) ── */
+.element-toggles {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: -2px 0 0;
+  padding: 6px 0 0 30px; /* align with the domain label */
+  border-top: 1px solid var(--hairline-faint);
+}
+
+.element-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  transition: color var(--transition);
+}
+
+.element-toggle:hover {
+  color: var(--text-primary);
+}
+
+.element-toggle input {
+  width: 13px;
+  height: 13px;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 /* ── Settings Section ─────────────── */
@@ -754,8 +896,7 @@ body {
 .open-full-timer:focus-visible,
 #site-input:focus-visible,
 .slider:focus-visible,
-.mode-button:focus-visible,
-.friction-level-select:focus-visible,
+.restriction-select:focus-visible,
 .element-toggle input:focus-visible,
 .master-toggle input:focus-visible + .toggle-slider,
 .site-toggle input:focus-visible + .toggle-slider {
@@ -783,6 +924,8 @@ body {
   .tab-btn,
   .timer-btn,
   .open-full-timer,
+  .restriction-select,
+  .restriction-tooltip,
   .slider::-webkit-slider-thumb {
     transition: none !important;
   }

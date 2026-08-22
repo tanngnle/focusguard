@@ -236,116 +236,157 @@ describe("popup.js — C3: rapid-succession delete keyed by domain", () => {
   });
 });
 
-describe("popup.js — intervention mode", () => {
+describe("popup.js — restriction dropdown", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("renders strip/block toggle for each site card", async () => {
+  /** Fires a change event on a card's restriction select and returns
+   *  the freshly persisted site object for that domain. */
+  async function selectLevel(domain, level) {
+    const select = document.querySelector(
+      `.site-card[data-domain="${domain}"] .restriction-select`
+    );
+    select.value = level;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    await flushMicrotasks();
+    const data = await chrome.storage.sync.get(["sites"]);
+    return data.sites.find((s) => s.domain === domain);
+  }
+
+  it("renders a select with exactly Strip/Friction/Block options reflecting the stored restrictionLevel (built-ins and user sites)", async () => {
     await mountPopup({
       enabled: true,
       sites: [
         { domain: "youtube.com", active: true, restrictionLevel: "strip" },
+        { domain: "facebook.com", active: true, restrictionLevel: "friction" },
         { domain: "twitter.com", active: true, restrictionLevel: "block" },
       ],
     });
 
-    const youtubeCard = document.querySelector('.site-card[data-domain="youtube.com"]');
-    const twitterCard = document.querySelector('.site-card[data-domain="twitter.com"]');
-
-    // Each card should have an intervention mode toggle
-    const youtubeModeToggle = youtubeCard.querySelector('.intervention-mode-toggle');
-    const twitterModeToggle = twitterCard.querySelector('.intervention-mode-toggle');
-
-    expect(youtubeModeToggle).toBeTruthy();
-    expect(twitterModeToggle).toBeTruthy();
-
-    // YouTube should show "strip" as selected
-    const youtubeModeValue = youtubeModeToggle.querySelector('.mode-value');
-    expect(youtubeModeValue.textContent).toBe("strip");
-
-    // Twitter should show "block" as selected
-    const twitterModeValue = twitterModeToggle.querySelector('.mode-value');
-    expect(twitterModeValue.textContent).toBe("block");
-  });
-
-  it("toggling restriction level cycles strip \u2192 friction \u2192 block", async () => {
-    await mountPopup({
-      enabled: true,
-      sites: [
-        { domain: "youtube.com", active: true, restrictionLevel: "strip" },
-      ],
-    });
-  
-    function getModeButton() {
-      const card = document.querySelector('.site-card[data-domain="youtube.com"]');
-      return card.querySelector('.intervention-mode-toggle .mode-button');
+    const expected = [
+      ["youtube.com", "strip"],
+      ["facebook.com", "friction"],
+      ["twitter.com", "block"],
+    ];
+    for (const [domain, level] of expected) {
+      const select = document.querySelector(
+        `.site-card[data-domain="${domain}"] .restriction-select`
+      );
+      expect(select).toBeTruthy();
+      expect([...select.options].map((o) => o.value)).toEqual([
+        "strip",
+        "friction",
+        "block",
+      ]);
+      expect([...select.options].map((o) => o.textContent)).toEqual([
+        "Strip",
+        "Friction",
+        "Block",
+      ]);
+      expect(select.value).toBe(level);
+      expect(select.getAttribute("aria-label")).toBe(`Restriction level for ${domain}`);
     }
-  
-    // Click to toggle from strip to friction
-    getModeButton().click();
-    await flushMicrotasks();
-  
-    let data = await chrome.storage.sync.get(["sites"]);
-    let youtubeSite = data.sites.find((s) => s.domain === "youtube.com");
-    expect(youtubeSite.restrictionLevel).toBe("friction");
-  
-    // Click again: friction \u2192 block
-    getModeButton().click();
-    await flushMicrotasks();
-  
-    data = await chrome.storage.sync.get(["sites"]);
-    youtubeSite = data.sites.find((s) => s.domain === "youtube.com");
-    expect(youtubeSite.restrictionLevel).toBe("block");
-  
-    // Click again: block \u2192 strip (full cycle)
-    getModeButton().click();
-    await flushMicrotasks();
-  
-    data = await chrome.storage.sync.get(["sites"]);
-    youtubeSite = data.sites.find((s) => s.domain === "youtube.com");
-    expect(youtubeSite.restrictionLevel).toBe("strip");
   });
 
-  it("shows element-level toggles for YouTube in strip mode", async () => {
+  it("defaults the dropdown to Strip for sites without a restrictionLevel", async () => {
     await mountPopup({
       enabled: true,
-      sites: [
-        { domain: "youtube.com", active: true, restrictionLevel: "strip" },
-      ],
+      sites: [{ domain: "reddit.com", active: true }],
+    });
+    const select = document.querySelector(
+      '.site-card[data-domain="reddit.com"] .restriction-select'
+    );
+    expect(select.value).toBe("strip");
+  });
+
+  it("selecting each level persists restrictionLevel; friction also persists frictionDelay: 15", async () => {
+    await mountPopup({
+      enabled: true,
+      sites: [{ domain: "youtube.com", active: true, restrictionLevel: "strip" }],
     });
 
-    const youtubeCard = document.querySelector('.site-card[data-domain="youtube.com"]');
-    const elementToggles = youtubeCard.querySelector('.element-toggles');
+    let site = await selectLevel("youtube.com", "friction");
+    expect(site.restrictionLevel).toBe("friction");
+    expect(site.frictionDelay).toBe(15);
 
-    // YouTube should show element-level toggles
-    expect(elementToggles).toBeTruthy();
+    site = await selectLevel("youtube.com", "block");
+    expect(site.restrictionLevel).toBe("block");
+    expect(site.frictionDelay).toBeUndefined();
 
-    // Should have toggles for key elements
-    const homeFeedToggle = elementToggles.querySelector('[data-element="homeFeed"]');
-    const sidebarToggle = elementToggles.querySelector('[data-element="sidebar"]');
-    const shortsToggle = elementToggles.querySelector('[data-element="shorts"]');
-    const commentsToggle = elementToggles.querySelector('[data-element="comments"]');
-
-    expect(homeFeedToggle).toBeTruthy();
-    expect(sidebarToggle).toBeTruthy();
-    expect(shortsToggle).toBeTruthy();
-    expect(commentsToggle).toBeTruthy();
+    site = await selectLevel("youtube.com", "strip");
+    expect(site.restrictionLevel).toBe("strip");
+    expect(site.frictionDelay).toBeUndefined();
   });
 
-  it("hides element-level toggles for unsupported platforms", async () => {
+  it("friction shows the static 'Delay: 15 seconds' note; strip shows element checkboxes; block shows neither", async () => {
     await mountPopup({
       enabled: true,
-      sites: [
-        { domain: "twitter.com", active: true, restrictionLevel: "strip" },
-      ],
+      sites: [{ domain: "youtube.com", active: true, restrictionLevel: "friction", frictionDelay: 15 }],
+    });
+
+    let card = document.querySelector('.site-card[data-domain="youtube.com"]');
+    expect(card.querySelector(".friction-delay-note").textContent).toBe("Delay: 15 seconds");
+    expect(card.querySelector(".element-toggles")).toBeNull();
+    // The old [5,30,60] delay selector is gone entirely.
+    expect(card.querySelector(".friction-level-select")).toBeNull();
+
+    // Strip → element checkboxes appear, delay note disappears.
+    await selectLevel("youtube.com", "strip");
+    card = document.querySelector('.site-card[data-domain="youtube.com"]');
+    expect(card.querySelector(".friction-delay-note")).toBeNull();
+    const elementToggles = card.querySelector(".element-toggles");
+    expect(elementToggles).toBeTruthy();
+    expect(elementToggles.querySelector('[data-element="homeFeed"]')).toBeTruthy();
+    expect(elementToggles.querySelector('[data-element="sidebar"]')).toBeTruthy();
+    expect(elementToggles.querySelector('[data-element="shorts"]')).toBeTruthy();
+    expect(elementToggles.querySelector('[data-element="comments"]')).toBeTruthy();
+
+    // Block → neither delay note nor element toggles.
+    await selectLevel("youtube.com", "block");
+    card = document.querySelector('.site-card[data-domain="youtube.com"]');
+    expect(card.querySelector(".friction-delay-note")).toBeNull();
+    expect(card.querySelector(".element-toggles")).toBeNull();
+  });
+
+  it("hides element toggles for unsupported platforms even in strip mode", async () => {
+    await mountPopup({
+      enabled: true,
+      sites: [{ domain: "twitter.com", active: true, restrictionLevel: "strip" }],
     });
 
     const twitterCard = document.querySelector('.site-card[data-domain="twitter.com"]');
-    const elementToggles = twitterCard.querySelector('.element-toggles');
+    expect(twitterCard.querySelector(".element-toggles")).toBeNull();
+  });
 
-    // Twitter doesn't have a stripping template yet, so no element toggles
-    expect(elementToggles).toBeNull();
+  it("never reads or writes the legacy interventionMode/frictionLevel keys", async () => {
+    await mountPopup({
+      enabled: true,
+      sites: [{ domain: "youtube.com", active: true, restrictionLevel: "strip" }],
+    });
+
+    const setCallsBefore = chrome.storage.sync.set.mock.calls.length;
+    await selectLevel("youtube.com", "friction");
+    await selectLevel("youtube.com", "block");
+
+    // Every sync write since mount carries restrictionLevel-bearing sites
+    // with no legacy keys anywhere inside them.
+    const writes = chrome.storage.sync.set.mock.calls.slice(setCallsBefore);
+    expect(writes.length).toBeGreaterThan(0);
+    for (const [items] of writes) {
+      if (!items.sites) continue;
+      for (const site of items.sites) {
+        expect(Object.keys(site)).toContain("restrictionLevel");
+        expect(Object.keys(site)).not.toContain("interventionMode");
+        expect(Object.keys(site)).not.toContain("frictionLevel");
+      }
+    }
+
+    const data = await chrome.storage.sync.get(["sites"]);
+    const site = data.sites.find((s) => s.domain === "youtube.com");
+    expect(site.restrictionLevel).toBe("block");
+    expect(Object.keys(site)).not.toContain("interventionMode");
+    expect(Object.keys(site)).not.toContain("frictionLevel");
   });
 });
 
