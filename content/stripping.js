@@ -35,6 +35,189 @@ function getAvailableElements(hostname) {
   return null;
 }
 
+// ── Interstitial Overlay ────────────────────────────────
+// Full-screen overlay that appears before the page loads.
+// Shows a breathing animation + countdown timer.
+// After the delay, the overlay fades out and stripping CSS takes effect.
+// This implements the "mindful delay" flow from the product spec.
+
+const OVERLAY_STYLES = `
+  #mindfulbrowse-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--bg-dark, #08080f);
+    z-index: 2147483647;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-body, 'Inter', -apple-system, BlinkMacSystemFont, sans-serif);
+    color: var(--text-primary, #e8e8f0);
+    transition: opacity 0.5s ease;
+  }
+  #mindfulbrowse-overlay.fade-out {
+    opacity: 0;
+  }
+  #mindfulbrowse-overlay .breathing-ring {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    border: 3px solid var(--work-color, #2ed573);
+    opacity: 0.4;
+    animation: mindfulbrowse-breathe 4s ease-in-out infinite;
+    margin-bottom: 32px;
+  }
+  @keyframes mindfulbrowse-breathe {
+    0%, 100% { transform: scale(0.9); opacity: 0.3; }
+    50% { transform: scale(1.15); opacity: 0.6; }
+  }
+  #mindfulbrowse-overlay .message {
+    text-align: center;
+    margin-bottom: 24px;
+  }
+  #mindfulbrowse-overlay .message h1 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  #mindfulbrowse-overlay .message p {
+    font-size: 13px;
+    color: var(--text-secondary, #8888aa);
+  }
+  #mindfulbrowse-overlay .message .domain {
+    color: var(--work-color, #2ed573);
+    font-weight: 600;
+  }
+  #mindfulbrowse-overlay .countdown {
+    font-family: var(--font-display, 'Orbitron', monospace);
+    font-size: 36px;
+    letter-spacing: 2px;
+    margin-bottom: 24px;
+  }
+  #mindfulbrowse-overlay .btn-proceed {
+    padding: 12px 32px;
+    border: none;
+    border-radius: 12px;
+    font-family: var(--font-body, 'Inter', sans-serif);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  #mindfulbrowse-overlay .btn-proceed:disabled {
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-muted, #555570);
+    cursor: not-allowed;
+  }
+  #mindfulbrowse-overlay .btn-proceed:not(:disabled) {
+    background: var(--work-color, #2ed573);
+    color: var(--bg-dark, #08080f);
+  }
+  #mindfulbrowse-overlay .btn-proceed:not(:disabled):hover {
+    background: #3ee883;
+    transform: scale(1.02);
+  }
+`;
+
+// ── Overlay Delay Decision ──────────────────────────────
+// Pure helper: how long the interstitial overlay should last
+// for a given site.
+//   strip   → fixed 3s
+//   friction→ site.frictionDelay, falling back to 15s
+//   block   → null (no overlay; background already redirected)
+// Exposed on `self` so tests can exercise the decision directly
+// (content scripts are self-contained — no ES imports).
+
+function getInterstitialDelaySeconds(site) {
+  const restrictionLevel = site?.restrictionLevel || "strip";
+  if (restrictionLevel === "block") return null;
+  if (restrictionLevel === "friction") return site.frictionDelay || 15;
+  return 3;
+}
+
+self.__mindfulBrowseStrippingInternals = { getInterstitialDelaySeconds };
+
+function createInterstitialOverlay(delaySeconds, targetDomain) {
+  // Inject styles
+  const styleEl = document.createElement('style');
+  styleEl.id = 'mindfulbrowse-overlay-styles';
+  styleEl.textContent = OVERLAY_STYLES;
+  document.head.appendChild(styleEl);
+
+  // Create overlay
+  const overlay = document.createElement('div');
+  overlay.id = 'mindfulbrowse-overlay';
+  overlay.innerHTML = `
+    <div class="breathing-ring"></div>
+    <div class="message">
+      <h1>Take a deep breath</h1>
+      <p>You're about to visit <span class="domain">${targetDomain}</span></p>
+    </div>
+    <div class="countdown">0:${delaySeconds.toString().padStart(2, '0')}</div>
+    <button class="btn-proceed" disabled>I still want to go</button>
+  `;
+
+  document.documentElement.appendChild(overlay);
+
+  // Countdown logic
+  let remaining = delaySeconds;
+  const countdownEl = overlay.querySelector('.countdown');
+  const btnProceed = overlay.querySelector('.btn-proceed');
+
+  const timer = setInterval(() => {
+    remaining--;
+    if (remaining <= 0) {
+      clearInterval(timer);
+      countdownEl.textContent = '0:00';
+      countdownEl.style.color = 'var(--work-color, #2ed573)';
+      btnProceed.disabled = false;
+    } else {
+      countdownEl.textContent = `0:${remaining.toString().padStart(2, '0')}`;
+    }
+  }, 1000);
+
+  // Proceed button
+  btnProceed.addEventListener('click', () => {
+    clearInterval(timer);
+    overlay.classList.add('fade-out');
+    setTimeout(() => {
+      overlay.remove();
+      styleEl.remove();
+    }, 500);
+  });
+}
+
+// ── Overlay once-per-URL guard ──────────────────────────
+// applyStrippingProfile() re-runs on every sync onChanged event and
+// on every YouTube SPA navigation (`yt-page-data-updated`). The overlay
+// must NOT reappear for the same page — track the URL it last showed
+// for. Same URL → skip. Changed URL (real SPA navigation) → re-apply
+// the overlay with the correct delay for the site's restriction level.
+let lastOverlayUrl = null;
+
+function showInterstitialIfNeeded(site) {
+  // Block is handled by the background redirect — no overlay.
+  const delaySeconds = getInterstitialDelaySeconds(site);
+  if (delaySeconds === null) return;
+
+  const currentUrl = window.location.href;
+  if (lastOverlayUrl === currentUrl) return;
+
+  lastOverlayUrl = currentUrl;
+  createInterstitialOverlay(delaySeconds, window.location.hostname);
+}
+
+function removeExistingOverlay() {
+  // Drop a visible overlay (and its styles) when protection is
+  // switched off for this page — master toggle or site toggle.
+  lastOverlayUrl = null;
+  document.getElementById("mindfulbrowse-overlay")?.remove();
+  document.getElementById("mindfulbrowse-overlay-styles")?.remove();
+}
+
 // ── Attribute Helpers ───────────────────────────────────
 // The CSS file uses html[data-fg-{element}="true"] gates.
 // Setting an attribute instantly activates the corresponding
@@ -74,9 +257,10 @@ async function applyStrippingProfile() {
     const data = await chrome.storage.sync.get(["sites", "enabled"]);
     const sites = data.sites || [];
 
-    // Master toggle off — strip nothing
+    // Master toggle off — strip nothing, no overlay
     if (data.enabled === false) {
       clearAllStripAttributes();
+      removeExistingOverlay();
       return;
     }
 
@@ -90,15 +274,20 @@ async function applyStrippingProfile() {
       );
     });
 
-    // Site not in list or toggled off — strip nothing
+    // Site not in list or toggled off — strip nothing, no overlay
     if (!site || site.active === false) {
       clearAllStripAttributes();
+      removeExistingOverlay();
       return;
     }
 
-    // Check intervention mode
-    const interventionMode = site.interventionMode || "strip";
-    if (interventionMode !== "strip") {
+    // Restriction level decides what this script does:
+    //   strip / friction → strip elements (friction shows the delay
+    //                      overlay first, then lands on the stripped page)
+    //   block            → nothing; background.js already redirected
+    //                      this tab to blocked.html
+    const restrictionLevel = site.restrictionLevel || "strip";
+    if (restrictionLevel === "block") {
       clearAllStripAttributes();
       return;
     }
@@ -113,6 +302,12 @@ async function applyStrippingProfile() {
 
     // Get stripping profile (use stored profile or default: all enabled)
     const profile = site?.strippingProfile || {};
+
+    // Show interstitial overlay BEFORE setting stripping attributes.
+    // The once-per-URL guard inside keeps it from reappearing when
+    // this function re-runs for the same page (storage onChanged,
+    // yt-page-data-updated); a real URL change re-applies it.
+    showInterstitialIfNeeded(site);
 
     // Set attributes for each available element
     availableElements.forEach((elementName) => {
