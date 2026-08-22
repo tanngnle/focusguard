@@ -3,6 +3,7 @@ import {
   resetChromeMock,
   triggerNavigation,
   triggerOnInstalled,
+  triggerMessage,
   FAKE_EXTENSION_ID,
 } from "./helpers/chrome-mock.js";
 
@@ -245,5 +246,41 @@ describe("background.js — onInstalled seeding (A2 regression)", () => {
     const setCallsBefore = chrome.storage.sync.set.mock.calls.length;
     await triggerOnInstalled({ reason: "install" });
     expect(chrome.storage.sync.set.mock.calls.length).toBe(setCallsBefore);
+  });
+});
+
+describe("background.js — runtime messages", () => {
+  beforeEach(() => {
+    resetChromeMock();
+  });
+
+  it("close-tab message removes the sender's tab", async () => {
+    await chrome.storage.sync.set({ enabled: true, sites: [] });
+    await loadBackground();
+
+    await triggerMessage({ type: "close-tab" }, { tab: { id: 42 } });
+
+    expect(chrome.tabs.remove).toHaveBeenCalledTimes(1);
+    expect(chrome.tabs.remove).toHaveBeenCalledWith(42);
+  });
+
+  it("ignores unknown message types", async () => {
+    await chrome.storage.sync.set({ enabled: true, sites: [] });
+    await loadBackground();
+
+    await triggerMessage({ type: "something-else" }, { tab: { id: 42 } });
+    await triggerMessage(null, { tab: { id: 42 } });
+
+    expect(chrome.tabs.remove).not.toHaveBeenCalled();
+  });
+
+  it("ignores close-tab when the sender has no tab (e.g. sent from the popup)", async () => {
+    await chrome.storage.sync.set({ enabled: true, sites: [] });
+    await loadBackground();
+
+    await triggerMessage({ type: "close-tab" }, {});
+    await triggerMessage({ type: "close-tab" }, { tab: {} });
+
+    expect(chrome.tabs.remove).not.toHaveBeenCalled();
   });
 });

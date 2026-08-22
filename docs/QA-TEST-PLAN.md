@@ -223,7 +223,32 @@ and the popup's Timer tab shares one timer state with the blocked page via
 
 ---
 
-## 9. Results Template
+## 9. Stripping (Strip Mode)
+
+Covers the strip intervention (`content/stripping.js`, `lib/stripping-rules.js`):
+instead of redirecting, FocusGuard injects a `<style>` element that hides
+distracting elements (home feed, sidebar, shorts, comments…) on supported
+platforms. These cases pin the gating and partial-profile semantics fixed
+after the strip-intervention code review.
+
+Preconditions common to all rows: extension loaded, `youtube.com` used as the
+test platform, DevTools open on the YouTube tab. To verify injection, inspect
+`document.getElementById("focusguard-stripping-styles")` in the page console
+— it must exist (and contain `display: none !important` rules) exactly when
+stripping is expected to be active.
+
+| ID | Case | Steps | Expected |
+|---|---|---|---|
+| `STRP-01` — **unlisted sites are never stripped** | Empty blocklist | Navigate to `https://www.youtube.com/`. | The page renders normally — **no** `#focusguard-stripping-styles` element exists. Being a supported platform is not enough; the user must have listed the site. |
+| `STRP-02` — **master toggle and per-site toggle gate stripping** | `youtube.com` listed, active, strip mode, page open and stripping active | 1. Flip the master toggle off in the popup. 2. Back on, flip only the youtube.com card's toggle off. 3. Flip it back on. | Step 1 removes the injected styles immediately (no reload needed) and elements reappear. Step 2 removes them again. Step 3 re-injects them. No tab reload required at any step. |
+| `STRP-03` — **partial profile keeps other elements active (PRIMARY REGRESSION)** | `youtube.com` listed, active, strip mode | 1. In the popup, uncheck exactly one element toggle on the youtube.com card (e.g. **Comments**). 2. Reload the YouTube tab. 3. Inspect `#focusguard-stripping-styles` and the popup checkboxes. | Only the unchecked element is visible again — every **other** element (home feed, sidebar, shorts…) is still hidden, and its toggle still shows checked. `chrome.storage.sync.get(["sites"])` shows a `strippingProfile` containing **only** the one toggled key (e.g. `{ comments: false }`) — that partial shape is valid and must not zero out the other rules. |
+| `STRP-04` — strip mode does not redirect | `youtube.com` listed, active, mode `strip` | Navigate to `https://www.youtube.com/`. | No redirect to the timer page; the page loads with distracting elements hidden instead. |
+| `STRP-05` — SPA churn keeps styles applied | `youtube.com` listed, active, strip mode | On the stripped YouTube tab, click around the SPA (home → watch page → back) without reloading; then in the page console run `document.getElementById("focusguard-stripping-styles").remove()` and click any in-page link. | Styles stay applied across SPA navigations. After the manual removal, the next DOM change re-injects the style element automatically. |
+| `STRP-06` — re-intervention overlay "Close tab" works | `youtube.com` listed, active, strip mode; seed friction level 2 via console: `chrome.storage.sync.get(["sites"]).then(d => { d.sites[0].frictionLevel = 2; chrome.storage.sync.set(d); })`, then reload the tab | Wait 15 minutes on the page (or temporarily lower the interval in a dev copy). When the "Still being productive?" overlay appears, click **Close tab**. | The tab actually closes. (`window.close()` alone is ignored on user-opened tabs; the content script asks the service worker to close it — confirm one `tabs.remove` call in the service worker console if desired.) Also confirm the timer stops if you flip friction to level 3 or the site off while it is armed: no overlay appears afterward. |
+
+---
+
+## 10. Results Template
 
 Copy this table per test pass. One row per case executed; leave rows out for cases not run this pass and say so in the summary.
 
@@ -245,5 +270,6 @@ Full execution of all ~50 cases above is expensive; run this subset every releas
 8. `BLK-10`, `BLK-11` — master toggle and per-site toggle both actually gate blocking
 9. `UI-06` — chat overlay must not cover the timer controls (v1.1.0 regression)
 10. `UI-03`, `UI-04` — popup ↔ blocked page stay in agreement on the shared timer state
+11. `STRP-01`, `STRP-03` — unlisted sites never stripped; a partial stripping profile must not zero out every rule
 
-If all ten pass with a clean console, the release is safe to ship pending the rest of the suite at normal cadence (e.g. before a major version bump, or after any change touching `background.js`, `lib/matcher.js`, `lib/domain.js`, or the storage schema).
+If all eleven pass with a clean console, the release is safe to ship pending the rest of the suite at normal cadence (e.g. before a major version bump, or after any change touching `background.js`, `lib/matcher.js`, `lib/domain.js`, or the storage schema).

@@ -66,6 +66,19 @@ chrome.runtime.onInstalled.addListener(async () => {
 });
 
 /**
+ * Handle messages from content scripts.
+ * "close-tab": the re-intervention overlay's "Close tab" button. Content
+ * scripts can't close user-opened tabs via window.close() (Chrome ignores
+ * it), so they ask the service worker to close their own tab instead.
+ * chrome.tabs.remove requires no additional manifest permission.
+ */
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (message && message.type === "close-tab" && sender && sender.tab && sender.tab.id != null) {
+    chrome.tabs.remove(sender.tab.id);
+  }
+});
+
+/**
  * Intercept navigation events and redirect blocked sites
  */
 chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {

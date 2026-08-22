@@ -120,7 +120,9 @@ function createOverlay() {
   // Wire up buttons
   document.getElementById("focusguard-continue").addEventListener("click", hideOverlay);
   document.getElementById("focusguard-close").addEventListener("click", () => {
-    window.close();
+    // window.close() is ignored on tabs the user opened, so ask the
+    // service worker to close this tab instead (handled in background.js).
+    chrome.runtime.sendMessage({ type: "close-tab" });
   });
 
   overlayVisible = true;
@@ -148,10 +150,23 @@ function startReInterventionTimer(intervalMs) {
 
 // ── Initialization ──────────────────────────────────────
 async function init() {
+  // A previously armed interval must not survive a config change:
+  // friction level, intervention mode, site active flag, or the
+  // master toggle can all drop out of the arming conditions below,
+  // and the old interval would keep firing if not cleared first.
+  if (timerHandle) {
+    clearInterval(timerHandle);
+    timerHandle = null;
+  }
+
   const hostname = window.location.hostname;
 
   try {
-    const data = await chrome.storage.sync.get(["sites"]);
+    const data = await chrome.storage.sync.get(["enabled", "sites"]);
+
+    // Master toggle off → no re-intervention.
+    if (data.enabled === false) return;
+
     const sites = data.sites || [];
 
     const site = sites.find((s) => {
@@ -161,6 +176,7 @@ async function init() {
     });
 
     if (!site) return;
+    if (site.active === false) return;
     if (site.interventionMode !== "strip") return;
 
     const frictionLevel = site.frictionLevel || 3;
@@ -175,9 +191,11 @@ async function init() {
 
 init();
 
-// Listen for storage changes (friction level updates)
+// Listen for storage changes (friction level updates or the master
+// toggle flipping) — re-run init() either way; init() clears any
+// previously armed timer before deciding whether to re-arm.
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === "sync" && changes.sites) {
+  if (areaName === "sync" && (changes.sites || changes.enabled)) {
     // Restart timer with new config
     init();
   }
