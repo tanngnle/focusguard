@@ -134,7 +134,12 @@ const OVERLAY_STYLES = `
 function getInterstitialDelaySeconds(site) {
   const restrictionLevel = site?.restrictionLevel || "strip";
   if (restrictionLevel === "block") return null;
-  if (restrictionLevel === "friction") return site.frictionDelay || 15;
+  if (restrictionLevel === "friction") {
+    // Clamp corrupt data (negative / NaN / non-numeric) — a bogus delay
+    // would otherwise render a broken countdown or strand the overlay.
+    const d = site.frictionDelay;
+    return Number.isFinite(d) && d > 0 ? Math.ceil(d) : 15;
+  }
   return 3;
 }
 
@@ -167,10 +172,11 @@ function createInterstitialOverlay(delaySeconds, targetDomain) {
   const countdownEl = overlay.querySelector('.countdown');
   const btnProceed = overlay.querySelector('.btn-proceed');
 
-  const timer = setInterval(() => {
+  stopOverlayCountdown();
+  overlayCountdownInterval = setInterval(() => {
     remaining--;
     if (remaining <= 0) {
-      clearInterval(timer);
+      stopOverlayCountdown();
       countdownEl.textContent = '0:00';
       countdownEl.style.color = 'var(--work-color, #2ed573)';
       btnProceed.disabled = false;
@@ -181,7 +187,7 @@ function createInterstitialOverlay(delaySeconds, targetDomain) {
 
   // Proceed button
   btnProceed.addEventListener('click', () => {
-    clearInterval(timer);
+    stopOverlayCountdown();
     overlay.classList.add('fade-out');
     setTimeout(() => {
       overlay.remove();
@@ -198,6 +204,20 @@ function createInterstitialOverlay(delaySeconds, targetDomain) {
 // the overlay with the correct delay for the site's restriction level.
 let lastOverlayUrl = null;
 
+// Module-scoped handle to the live overlay's countdown interval. Hoisted
+// out of createInterstitialOverlay so removeExistingOverlay() can cancel
+// it when a live overlay is torn down (master/site toggle off, level
+// flipped to block, SPA re-navigation) instead of leaking it until it
+// counts itself to zero.
+let overlayCountdownInterval = null;
+
+function stopOverlayCountdown() {
+  if (overlayCountdownInterval != null) {
+    clearInterval(overlayCountdownInterval);
+    overlayCountdownInterval = null;
+  }
+}
+
 function showInterstitialIfNeeded(site) {
   // Block is handled by the background redirect — no overlay.
   const delaySeconds = getInterstitialDelaySeconds(site);
@@ -206,16 +226,24 @@ function showInterstitialIfNeeded(site) {
   const currentUrl = window.location.href;
   if (lastOverlayUrl === currentUrl) return;
 
+  // SPA navigation: tear down any overlay/style leftovers from the
+  // previous page and cancel the old countdown interval before building
+  // a fresh one — overlays must never stack across navigations.
+  removeExistingOverlay();
   lastOverlayUrl = currentUrl;
   createInterstitialOverlay(delaySeconds, window.location.hostname);
 }
 
 function removeExistingOverlay() {
-  // Drop a visible overlay (and its styles) when protection is
-  // switched off for this page — master toggle or site toggle.
+  // Drop visible overlays (and their styles) when protection is
+  // switched off for this page — master toggle, site toggle, or a flip
+  // to Block. Iterates EVERY instance so stacked duplicates from past
+  // SPA navigations all die, not just the first one getElementById sees.
   lastOverlayUrl = null;
-  document.getElementById("mindfulbrowse-overlay")?.remove();
-  document.getElementById("mindfulbrowse-overlay-styles")?.remove();
+  stopOverlayCountdown();
+  document
+    .querySelectorAll("#mindfulbrowse-overlay, #mindfulbrowse-overlay-styles")
+    .forEach((el) => el.remove());
 }
 
 // ── Attribute Helpers ───────────────────────────────────
@@ -285,10 +313,13 @@ async function applyStrippingProfile() {
     //   strip / friction → strip elements (friction shows the delay
     //                      overlay first, then lands on the stripped page)
     //   block            → nothing; background.js already redirected
-    //                      this tab to blocked.html
+    //                      this tab to blocked.html. Also drop any live
+    //                      overlay — flipping a page to Block mid-countdown
+    //                      must not leave the interstitial standing.
     const restrictionLevel = site.restrictionLevel || "strip";
     if (restrictionLevel === "block") {
       clearAllStripAttributes();
+      removeExistingOverlay();
       return;
     }
 

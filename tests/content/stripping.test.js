@@ -112,6 +112,22 @@ describe("content script — overlay delay decision (#24)", () => {
   it("a legacy site without restrictionLevel is treated as strip (3s)", () => {
     expect(getInterstitialDelaySeconds({ domain: "youtube.com" })).toBe(3);
   });
+
+  // m3 — corrupt frictionDelay must never produce a broken countdown or a
+  // stuck overlay; only a finite positive number is honored (rounded up).
+  it("m3: corrupt frictionDelay (negative) clamps to the 15s default", () => {
+    expect(getInterstitialDelaySeconds({ restrictionLevel: "friction", frictionDelay: -5 })).toBe(15);
+  });
+
+  it("m3: corrupt frictionDelay (NaN / zero / non-numeric) clamps to the 15s default", () => {
+    expect(getInterstitialDelaySeconds({ restrictionLevel: "friction", frictionDelay: NaN })).toBe(15);
+    expect(getInterstitialDelaySeconds({ restrictionLevel: "friction", frictionDelay: 0 })).toBe(15);
+    expect(getInterstitialDelaySeconds({ restrictionLevel: "friction", frictionDelay: "soon" })).toBe(15);
+  });
+
+  it("m3: fractional frictionDelay rounds up", () => {
+    expect(getInterstitialDelaySeconds({ restrictionLevel: "friction", frictionDelay: 7.2 })).toBe(8);
+  });
 });
 
 describe("content script — overlay display and once-per-URL guard (#24)", () => {
@@ -168,7 +184,7 @@ describe("content script — overlay display and once-per-URL guard (#24)", () =
     expect(overlays()).toBe(1);
   });
 
-  it("re-applies the overlay when a YouTube SPA navigation changes the URL", async () => {
+  it("re-applies the overlay when a YouTube SPA navigation changes the URL (no stacking)", async () => {
     await loadStripping([
       { domain: "youtube.com", active: true, restrictionLevel: "strip" },
     ]);
@@ -180,8 +196,17 @@ describe("content script — overlay display and once-per-URL guard (#24)", () =
     await vi.advanceTimersByTimeAsync(100);
     await flushMicrotasks();
 
-    expect(overlays()).toBe(2); // new overlay for the new page
+    // M4: the previous overlay is torn down before the new one is built —
+    // exactly one live overlay, never a stack.
+    expect(overlays()).toBe(1);
     expect(countdownText()).toBe("0:03");
+
+    // A second SPA navigation must not accumulate a duplicate either.
+    history.pushState({}, "", "/watch?v=ghi789");
+    window.dispatchEvent(new Event("yt-page-data-updated"));
+    await vi.advanceTimersByTimeAsync(100);
+    await flushMicrotasks();
+    expect(overlays()).toBe(1);
   });
 
   it("shows no overlay when the master toggle is off", async () => {
@@ -196,6 +221,22 @@ describe("content script — overlay display and once-per-URL guard (#24)", () =
     await loadStripping([
       { domain: "youtube.com", active: false, restrictionLevel: "strip" },
     ]);
+    expect(overlays()).toBe(0);
+  });
+
+  it("m2: flipping a live strip page to block tears down the standing overlay", async () => {
+    await loadStripping([
+      { domain: "youtube.com", active: true, restrictionLevel: "strip" },
+    ]);
+    expect(overlays()).toBe(1);
+
+    // Popup flips the site to Block mid-countdown; the sync onChanged write
+    // re-runs applyStrippingProfile, which must drop the live overlay.
+    await chrome.storage.sync.set({
+      sites: [{ domain: "youtube.com", active: true, restrictionLevel: "block" }],
+    });
+    await flushMicrotasks();
+
     expect(overlays()).toBe(0);
   });
 });

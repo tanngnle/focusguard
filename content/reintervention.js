@@ -1,6 +1,14 @@
 ﻿/*  ══════════════════════════════════════════════════════
     MindfulBrowse — Re-intervention Overlay (Content Script)
-    Level 2 friction: periodic modal during browsing
+    Friction tier: periodic check-in modal during browsing.
+
+    v1 schema port: the v0 gate (interventionMode/frictionLevel) was
+    deleted by the storage migration, which made this script dead code.
+    Friction is now expressed as restrictionLevel "friction" (+
+    frictionDelay), so the modal arms for friction sites only — strip
+    and block sites never get it. The 15-minute cadence is unchanged
+    (same timing semantics as the v0 Level-2 re-intervention).
+    Self-contained: no ES module imports.
     ═══════════════════════════════════════════════════════ */
 
 // ─ Configuration ───────────────────────────────────────
@@ -160,22 +168,32 @@ async function init() {
       return siteDomain === currentDomain || currentDomain.endsWith("." + siteDomain);
     });
 
+    // Config changed to a non-friction site (or the site was removed) —
+    // make sure a previously armed periodic timer stops firing.
+    stopReInterventionTimer();
+
     if (!site) return;
-    if (site.interventionMode !== "strip") return;
+    // v1 gate: only the friction tier carries the periodic modal
+    // (v0 equivalent: frictionLevel 2). Strip and block early-return.
+    const restrictionLevel = site.restrictionLevel || "strip";
+    if (restrictionLevel !== "friction") return;
 
-    const frictionLevel = site.frictionLevel || 3;
-    if (frictionLevel !== 2) return; // Only Level 2 uses overlay
-
-    const intervalMs = DEFAULT_INTERVAL_MS;
-    startReInterventionTimer(intervalMs);
+    startReInterventionTimer(DEFAULT_INTERVAL_MS);
   } catch (err) {
     console.error("MindfulBrowse re-intervention init failed:", err);
   }
 }
 
+function stopReInterventionTimer() {
+  if (timerHandle) {
+    clearInterval(timerHandle);
+    timerHandle = null;
+  }
+}
+
 init();
 
-// Listen for storage changes (friction level updates)
+// Listen for storage changes (restriction level updates)
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === "sync" && changes.sites) {
     // Restart timer with new config

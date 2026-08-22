@@ -78,7 +78,9 @@ describe("popup.js — add site", () => {
     await flushMicrotasks();
 
     const data = await chrome.storage.sync.get(["sites"]);
-    expect(data.sites).toEqual([{ domain: "twitter.com", active: true }]);
+    // B2: newly added sites persist restrictionLevel "strip" so background
+    // routing and the popup dropdown agree (no undefined → hard block).
+    expect(data.sites).toEqual([{ domain: "twitter.com", active: true, restrictionLevel: "strip" }]);
     expect(document.querySelectorAll(".site-card").length).toBe(1);
   });
 
@@ -541,6 +543,9 @@ describe("popup.js — Lock Down panel (#25)", () => {
   });
 
   it("never reads the inert storage.sync copies of the session keys", async () => {
+    // M5: migration/defaults no longer seed these keys into sync at all, so
+    // any sync copies here are by definition stale/hand-injected — the popup
+    // must still ignore them and treat chrome.storage.local as authoritative.
     await mountPopup(
       { enabled: true, sites: [], focusSessionActive: true, focusSessionEndsAt: Date.now() + 60000 },
       {}
@@ -690,6 +695,30 @@ describe("popup.js — Lock Down disabled site cards (#26)", () => {
     expect(redditCard.querySelector(".site-toggle input").disabled).toBe(true);
     // Master toggle still functional.
     expect(document.getElementById("master-toggle-input").disabled).toBe(false);
+  });
+
+  it("M1: the countdown expiry returns the panel to idle and unlocks cards when the deadline passes while the popup is open", async () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    await mountPopup(
+      { enabled: true, sites: MIXED_SITES },
+      { focusSessionActive: true, focusSessionEndsAt: now + 2000 } // ~2s left
+    );
+
+    // Adopted as active: panel live, cards locked.
+    expect(document.getElementById("lockdown-active").hidden).toBe(false);
+    expect(document.getElementById("lockdown-idle").hidden).toBe(true);
+    expectCardsLocked();
+
+    // Let the deadline pass while the popup stays open — the 1s ticker
+    // repaints from the deadline and must expire the session locally.
+    await vi.advanceTimersByTimeAsync(2100);
+    await flushMicrotasks();
+
+    // Panel back to idle and every card fully interactive again.
+    expect(document.getElementById("lockdown-active").hidden).toBe(true);
+    expect(document.getElementById("lockdown-idle").hidden).toBe(false);
+    expectCardsInteractive();
   });
 });
 

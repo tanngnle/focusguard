@@ -5,10 +5,13 @@
     ═══════════════════════════════════════════════════════ */
 
 import { matchSite } from "./lib/matcher.js";
-import { BUILTIN_SITES } from "./lib/domain.js";
+import { BUILTIN_SITES, isInContentScriptScope } from "./lib/domain.js";
 import { migrateStorage, CURRENT_SCHEMA_VERSION } from "./lib/storage-migration.js";
 
-// Default settings
+// Default settings. NOTE: focusSessionActive/focusSessionEndsAt are
+// deliberately absent — the Lock Down session lives exclusively in
+// chrome.storage.local (see hydration below) and must never be seeded
+// into sync, where it would leak session state across devices.
 const DEFAULTS = {
   enabled: true,
   sites: [],
@@ -19,8 +22,6 @@ const DEFAULTS = {
     roundsBeforeLong: 4,
   },
   schemaVersion: CURRENT_SCHEMA_VERSION,
-  focusSessionActive: false,
-  focusSessionEndsAt: null,
   proLicense: null,
 };
 
@@ -77,7 +78,9 @@ const ready = (async () => {
       await clearExpiredSession();
     }
   } else if (localData.focusSessionActive !== undefined) {
-    cache.focusSessionActive = localData.focusSessionActive;
+    // Strict boolean coercion — a corrupt truthy non-boolean must never
+    // arm enforcement (mirrors the onChanged branch below).
+    cache.focusSessionActive = localData.focusSessionActive === true;
   }
   hydrated = true;
 })();
@@ -168,30 +171,69 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     // If blocking is globally disabled, do nothing
     if (!cache.enabled) return;
 
+    // ── Lock Down override ──────────────────────────────
+    // Absolute while armed: matches listed sites regardless of their
+    // per-site `active` flag (product decision — Lock Down blocks ALL
+    // listed sites, individual toggles notwithstanding).
+    if (cache.focusSessionActive) {
+      if (isValidSessionDeadline(cacheSessionEndsAt, Date.now())) {
+        const lockdownSite = matchSite(
+          details.url,
+          cache.sites.map((site) =>
+            site && site.active !== true ? { ...site, active: true } : site
+          )
+        );
+        if (lockdownSite) {
+          const lockedDownUrl = chrome.runtime.getURL("blocked/blocked.html");
+          const lockdownRedirectUrl = `${lockedDownUrl}?domain=${encodeURIComponent(lockdownSite.domain)}`;
+          try {
+            await chrome.tabs.update(details.tabId, { url: lockdownRedirectUrl });
+          } catch (err) {
+            // Tab may have closed mid-navigation — nothing to redirect.
+          }
+        }
+        return;
+      }
+      // The deadline passed while this worker stayed awake (webNavigation
+      // events keep it alive, so hydration/onChanged never re-ran). Expire
+      // it now — the storage write's onChanged echo is the same path every
+      // other surface uses, and it flips this very cache back off without
+      // looping (newValue false) — then fall through to per-site handling.
+      cache.focusSessionActive = false;
+      cacheSessionEndsAt = null;
+      await clearExpiredSession();
+    }
+
     const matchedSite = matchSite(details.url, cache.sites);
     if (!matchedSite) return;
 
-    // Check Lock Down mode (force block all matched sites)
-    if (cache.focusSessionActive) {
-      const lockedDownUrl = chrome.runtime.getURL("blocked/blocked.html");
-      const lockdownRedirectUrl = `${lockedDownUrl}?domain=${encodeURIComponent(matchedSite.domain)}`;
+    // Read restriction level (strip/friction/block), defending against
+    // legacy entries missing the key entirely — they default to strip,
+    // matching what the popup displays for them. Strip and in-scope
+    // friction are delivered by the content script overlay; background
+    // lets them fall through and only redirects for block.
+    const restrictionLevel = matchedSite.restrictionLevel || "strip";
+    if (restrictionLevel === "strip") {
+      return;
+    }
+    if (restrictionLevel === "friction") {
+      // The friction overlay only exists where the content scripts
+      // inject (youtube.com / facebook.com). Anywhere else nobody would
+      // ever show it, so fall back to Block instead of letting the site
+      // run unrestricted.
+      let hostname = null;
       try {
-        await chrome.tabs.update(details.tabId, { url: lockdownRedirectUrl });
-      } catch (err) {
-        // Tab may have closed mid-navigation — nothing to redirect.
+        hostname = new URL(details.url).hostname;
+      } catch {
+        hostname = null; // unparseable → treat as out of scope
       }
-      return;
+      if (hostname !== null && isInContentScriptScope(hostname)) {
+        return;
+      }
     }
 
-    // Read restriction level directly (strip/friction/block).
-    // Strip and friction are delivered by the content script overlay —
-    // background lets them fall through; only block redirects.
-    const restrictionLevel = matchedSite.restrictionLevel;
-    if (restrictionLevel === "strip" || restrictionLevel === "friction") {
-      return;
-    }
-
-    // Block mode: redirect to Pomodoro timer page
+    // Block mode (or friction outside the content-script scope):
+    // redirect to the Pomodoro timer page.
     const blockedPageUrl = chrome.runtime.getURL("blocked/blocked.html");
     const redirectUrl = `${blockedPageUrl}?domain=${encodeURIComponent(matchedSite.domain)}`;
 

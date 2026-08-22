@@ -302,6 +302,34 @@ describe("blocked page — Lock Down session lifecycle (#25)", () => {
     expect(data.focusSessionActive).toBe(false);
     expect(data.focusSessionEndsAt).toBe(null);
   });
+
+  it("m5: load-time revival of a work phase that expired while the tab was closed clears the focus session", async () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    // A RUNNING work phase whose deadline already passed (the tab was closed
+    // when it completed), plus an armed Lock Down session.
+    await mountBlocked({
+      focusSessionActive: true,
+      focusSessionEndsAt: now + 60 * 60000,
+      MindfulBrowse_timer_state: {
+        phase: "work",
+        currentRound: 1,
+        totalRounds: 4,
+        totalTime: 1500,
+        isRunning: true,
+        endsAt: now - 5000, // expired while the tab was closed
+        remaining: null,
+        savedAt: now,
+      },
+    });
+
+    // Revival advanced exactly one phase to the short break...
+    expect(document.getElementById("phase-text").textContent).toBe("Short Break");
+    // ...and that work→break transition cleared the Lock Down session.
+    const data = await chrome.storage.local.get(["focusSessionActive", "focusSessionEndsAt"]);
+    expect(data.focusSessionActive).toBe(false);
+    expect(data.focusSessionEndsAt).toBe(null);
+  });
 });
 
 describe("blocked page — flip clock", () => {
