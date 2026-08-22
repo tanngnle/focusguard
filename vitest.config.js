@@ -9,6 +9,11 @@ export default defineConfig({
     // switching avoids the whole class of problem.
     pool: "threads",
     environment: "jsdom",
+    // jsdom-based suites are CPU-bound and this machine runs all files in
+    // parallel, so the 5s default occasionally times out healthy tests under
+    // peak load (observed flakes in popup/blocked suites). 15s keeps a real
+    // hang fast-failing while absorbing load spikes.
+    testTimeout: 15000,
     include: ["tests/**/*.test.js"],
     // A later agent may add Playwright specs under tests/e2e/ — those are
     // driven by `playwright test`, not vitest, and must never be collected

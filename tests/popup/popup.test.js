@@ -399,6 +399,159 @@ function readPopupFlipDigits() {
   return `${digits[0]}${digits[1]}:${digits[2]}${digits[3]}`;
 }
 
+describe("popup.js — Lock Down panel (#25)", () => {
+  beforeEach(() => {
+    ensureLocalStorage();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    window.localStorage.clear();
+  });
+
+  it("is collapsed by default and sits at the top of the Blocklist tab", async () => {
+    await mountPopup({ enabled: true, sites: [] });
+
+    const toggle = document.getElementById("lockdown-toggle");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(document.getElementById("lockdown-panel").classList.contains("open")).toBe(false);
+
+    // First section inside the Blocklist panel, before the add-site section.
+    const firstSection = document.querySelector("#tab-panel-sites > section");
+    expect(firstSection.classList.contains("lockdown-section")).toBe(true);
+    expect(firstSection.nextElementSibling.classList.contains("add-site-section")).toBe(true);
+  });
+
+  it("expanding reveals the duration select (15/25/45/60) and START; idle state hides the countdown", async () => {
+    await mountPopup({ enabled: true, sites: [] });
+
+    const toggle = document.getElementById("lockdown-toggle");
+    toggle.click();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(document.getElementById("lockdown-panel").classList.contains("open")).toBe(true);
+
+    const select = document.getElementById("lockdown-duration");
+    expect([...select.options].map((o) => o.value)).toEqual(["15", "25", "45", "60"]);
+    expect(select.getAttribute("aria-label")).toBe("Lock Down duration");
+    expect(document.getElementById("lockdown-idle").hidden).toBe(false);
+    expect(document.getElementById("lockdown-active").hidden).toBe(true);
+
+    // Collapsing again closes the panel.
+    toggle.click();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(document.getElementById("lockdown-panel").classList.contains("open")).toBe(false);
+  });
+
+  it("START writes focusSessionActive and a future focusSessionEndsAt to storage.local, then shows the active panel", async () => {
+    await mountPopup({ enabled: true, sites: [] });
+
+    document.getElementById("lockdown-toggle").click();
+    document.getElementById("lockdown-duration").value = "45";
+
+    const before = Date.now();
+    document.getElementById("lockdown-start-btn").click();
+    await flushMicrotasks();
+
+    const data = await chrome.storage.local.get(["focusSessionActive", "focusSessionEndsAt"]);
+    expect(data.focusSessionActive).toBe(true);
+    expect(typeof data.focusSessionEndsAt).toBe("number");
+    expect(data.focusSessionEndsAt).toBeGreaterThanOrEqual(before + 45 * 60000);
+    expect(data.focusSessionEndsAt).toBeLessThanOrEqual(Date.now() + 45 * 60000);
+
+    // Panel flipped to the active state.
+    expect(document.getElementById("lockdown-idle").hidden).toBe(true);
+    expect(document.getElementById("lockdown-active").hidden).toBe(false);
+  });
+
+  it("active panel shows a live countdown ticking each second, the Block-mode note, and STOP", async () => {
+    await mountPopup({ enabled: true, sites: [] });
+
+    vi.useFakeTimers();
+    const now = Date.now();
+    await chrome.storage.local.set({
+      focusSessionActive: true,
+      focusSessionEndsAt: now + 65_000,
+    });
+    await flushMicrotasks();
+
+    const countdown = document.getElementById("lockdown-countdown");
+    expect(countdown.textContent).toBe("01:05");
+    expect(countdown.getAttribute("aria-label")).toContain("01:05");
+    expect(document.querySelector("#lockdown-active .lockdown-note").textContent).toBe(
+      "All sites → Block mode"
+    );
+    expect(document.getElementById("lockdown-stop-btn")).toBeTruthy();
+
+    // The 1s ticker repaints from the deadline.
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(countdown.textContent).toBe("01:04");
+
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(countdown.textContent).toBe("01:02");
+
+    // The header chip mirrors the countdown even while collapsed.
+    const headerStatus = document.getElementById("lockdown-header-status");
+    expect(headerStatus.hidden).toBe(false);
+    expect(headerStatus.textContent).toBe("01:02");
+  });
+
+  it("STOP removes both session keys from storage.local and returns the panel to idle", async () => {
+    await mountPopup(
+      { enabled: true, sites: [] },
+      { focusSessionActive: true, focusSessionEndsAt: Date.now() + 300_000 }
+    );
+
+    // Seeded active session is adopted on open.
+    expect(document.getElementById("lockdown-active").hidden).toBe(false);
+    expect(document.getElementById("lockdown-idle").hidden).toBe(true);
+
+    document.getElementById("lockdown-stop-btn").click();
+    await flushMicrotasks();
+
+    const data = await chrome.storage.local.get(["focusSessionActive", "focusSessionEndsAt"]);
+    expect(data.focusSessionActive).toBeUndefined();
+    expect(data.focusSessionEndsAt).toBeUndefined();
+
+    expect(document.getElementById("lockdown-idle").hidden).toBe(false);
+    expect(document.getElementById("lockdown-active").hidden).toBe(true);
+    expect(document.getElementById("lockdown-header-status").hidden).toBe(true);
+  });
+
+  it("reacts to external storage.local writes (start, then background-style clear)", async () => {
+    await mountPopup({ enabled: true, sites: [] });
+    expect(document.getElementById("lockdown-idle").hidden).toBe(false);
+
+    vi.useFakeTimers();
+    const now = Date.now();
+
+    // External start (e.g. another surface arms the session).
+    await chrome.storage.local.set({
+      focusSessionActive: true,
+      focusSessionEndsAt: now + 125_000,
+    });
+    await flushMicrotasks();
+    expect(document.getElementById("lockdown-active").hidden).toBe(false);
+    expect(document.getElementById("lockdown-countdown").textContent).toBe("02:05");
+
+    // External clear — the background worker's expiry rewrite shape.
+    await chrome.storage.local.set({ focusSessionActive: false, focusSessionEndsAt: null });
+    await flushMicrotasks();
+    expect(document.getElementById("lockdown-active").hidden).toBe(true);
+    expect(document.getElementById("lockdown-idle").hidden).toBe(false);
+  });
+
+  it("never reads the inert storage.sync copies of the session keys", async () => {
+    await mountPopup(
+      { enabled: true, sites: [], focusSessionActive: true, focusSessionEndsAt: Date.now() + 60000 },
+      {}
+    );
+
+    // Only the local-area keys are authoritative — sync copies are ignored.
+    expect(document.getElementById("lockdown-active").hidden).toBe(true);
+    expect(document.getElementById("lockdown-idle").hidden).toBe(false);
+  });
+});
+
 describe("popup.js — tabs", () => {
   beforeEach(() => {
     ensureLocalStorage();

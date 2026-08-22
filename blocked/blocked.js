@@ -261,6 +261,7 @@ function tick() {
   renderTime(remaining);
 
   if (remaining <= 0) {
+    const completingPhase = timerState.phase; // capture before the transition
     playNotificationSound();
     pulseRing();
     timerState = skip(timerState, settings, now);
@@ -268,6 +269,22 @@ function tick() {
     disarmHeartbeat();
     applyPhaseUI();
     saveState();
+    // Lock Down lifecycle (#25): a NATURALLY completed work phase ends the
+    // focus session. Manual skip (skipPhase) deliberately does NOT clear it.
+    if (completingPhase === "work") {
+      clearFocusSession();
+    }
+  }
+}
+
+// End the Lock Down session by writing both keys back to storage.local —
+// the write's onChanged echo is what flips the background override cache
+// and the popup's Lock Down panel back to idle.
+async function clearFocusSession() {
+  try {
+    await chrome.storage.local.set({ focusSessionActive: false, focusSessionEndsAt: null });
+  } catch {
+    // Not in extension context
   }
 }
 

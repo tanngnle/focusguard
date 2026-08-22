@@ -45,6 +45,27 @@ const tabBtnTimer = document.getElementById("tab-btn-timer");
 const tabPanelSites = document.getElementById("tab-panel-sites");
 const tabPanelTimer = document.getElementById("tab-panel-timer");
 
+// ── Lock Down Panel DOM (#25) ─────────────────────
+const lockdownToggle = document.getElementById("lockdown-toggle");
+const lockdownPanel = document.getElementById("lockdown-panel");
+const lockdownIdle = document.getElementById("lockdown-idle");
+const lockdownActive = document.getElementById("lockdown-active");
+const lockdownDurationSelect = document.getElementById("lockdown-duration");
+const lockdownStartBtn = document.getElementById("lockdown-start-btn");
+const lockdownStopBtn = document.getElementById("lockdown-stop-btn");
+const lockdownCountdown = document.getElementById("lockdown-countdown");
+const lockdownHeaderStatus = document.getElementById("lockdown-header-status");
+
+// Lock Down session state mirrors the focusSessionActive /
+// focusSessionEndsAt pair in chrome.storage.local. The panel NEVER reads
+// storage.sync copies of those keys (inert v1-migration leftovers) and
+// re-renders from local-area onChanged events, so external writers —
+// the background worker expiring a session, the blocked page clearing
+// one on natural work-phase completion — are reflected live.
+let lockdownSessionActive = false;
+let lockdownSessionEndsAt = null;
+let lockdownTickerHandle = null;
+
 // ── Timer Tab DOM ───────────────────────────────────────
 const popupFlipClockMount = document.getElementById("popup-flip-clock");
 const popupTimerDigits = document.getElementById("popup-timer-digits");
@@ -164,6 +185,7 @@ async function init() {
   // fixtures can't crash).
   initTabs();
   initTimerTab();
+  initLockDownPanel();
 
   // Event listeners
   addSiteBtn.addEventListener("click", () => queueSiteMutation(addSite));
@@ -201,9 +223,10 @@ async function init() {
   // immediately re-render on top of our own optimistic UI update.
   chrome.storage.onChanged.addListener((changes, areaName) => {
     // Local area carries the shared timer state (written by the blocked
-    // page and by this popup's Timer tab).
+    // page and by this popup's Timer tab) and the Lock Down session keys.
     if (areaName === "local") {
       handleTimerStateChange(changes);
+      handleLockDownChange(changes);
       return;
     }
     if (areaName !== "sync") return;
@@ -485,6 +508,126 @@ function disarmPopupTicker() {
   if (popupTickerHandle != null) {
     clearInterval(popupTickerHandle);
     popupTickerHandle = null;
+  }
+}
+
+// ── Lock Down Panel (#25) ─────────────────────────
+// Session lifecycle: START writes focusSessionActive/focusSessionEndsAt
+// to chrome.storage.local; STOP removes both keys. All rendering flows
+// through renderLockDown(), driven by the initial read, our own writes'
+// onChanged echoes, and external writes (background expiry, blocked-page
+// natural completion) alike — no suppression flag needed because every
+// render is idempotent over the same two values.
+async function initLockDownPanel() {
+  if (!lockdownToggle) return;
+
+  lockdownToggle.addEventListener("click", () => {
+    const isOpen = lockdownToggle.classList.toggle("open");
+    lockdownPanel.classList.toggle("open", isOpen);
+    lockdownToggle.setAttribute("aria-expanded", String(isOpen));
+  });
+
+  lockdownStartBtn?.addEventListener("click", startLockDownSession);
+  lockdownStopBtn?.addEventListener("click", stopLockDownSession);
+
+  // Popup open — adopt whatever the session keys currently hold.
+  try {
+    const data = await chrome.storage.local.get(["focusSessionActive", "focusSessionEndsAt"]);
+    lockdownSessionActive = data.focusSessionActive === true;
+    lockdownSessionEndsAt =
+      typeof data.focusSessionEndsAt === "number" ? data.focusSessionEndsAt : null;
+  } catch {
+    // Not in extension context.
+  }
+  renderLockDown();
+
+  // Popup closing — stop the countdown ticker.
+  window.addEventListener("pagehide", disarmLockDownTicker);
+}
+
+async function startLockDownSession() {
+  const minutes = parseInt(lockdownDurationSelect?.value ?? "25", 10);
+  try {
+    await chrome.storage.local.set({
+      focusSessionActive: true,
+      focusSessionEndsAt: Date.now() + minutes * 60000,
+    });
+  } catch {
+    // Storage unavailable — the panel stays idle.
+  }
+}
+
+async function stopLockDownSession() {
+  try {
+    await chrome.storage.local.remove(["focusSessionActive", "focusSessionEndsAt"]);
+  } catch {
+    // Storage unavailable — nothing more to do.
+  }
+}
+
+// chrome.storage.onChanged (local area) handler for the session keys.
+// Removal events arrive with newValue undefined and flip the panel back
+// to idle just like an explicit { false, null } write.
+function handleLockDownChange(changes) {
+  if (!lockdownToggle) return;
+  if (!changes.focusSessionActive && !changes.focusSessionEndsAt) return;
+
+  if (changes.focusSessionActive) {
+    lockdownSessionActive = changes.focusSessionActive.newValue === true;
+  }
+  if (changes.focusSessionEndsAt) {
+    const value = changes.focusSessionEndsAt.newValue;
+    lockdownSessionEndsAt = typeof value === "number" ? value : null;
+  }
+  renderLockDown();
+}
+
+function renderLockDown() {
+  if (!lockdownToggle) return;
+
+  lockdownIdle.hidden = lockdownSessionActive;
+  lockdownActive.hidden = !lockdownSessionActive;
+  lockdownToggle.classList.toggle("session-active", lockdownSessionActive);
+
+  if (lockdownSessionActive) {
+    paintLockDownCountdown();
+    armLockDownTicker();
+  } else {
+    disarmLockDownTicker();
+    if (lockdownHeaderStatus) lockdownHeaderStatus.hidden = true;
+  }
+}
+
+// Deadline-based countdown — recomputed from focusSessionEndsAt on every
+// paint, so the 1s interval is only a repaint trigger, never the clock.
+function lockdownRemainingSeconds() {
+  if (typeof lockdownSessionEndsAt !== "number") return 0;
+  return Math.max(0, Math.ceil((lockdownSessionEndsAt - Date.now()) / 1000));
+}
+
+function paintLockDownCountdown() {
+  const display = formatTime(lockdownRemainingSeconds());
+  if (lockdownCountdown) {
+    lockdownCountdown.textContent = display;
+    // aria-label (not aria-live) keeps screen readers informed without
+    // announcing every second.
+    lockdownCountdown.setAttribute("aria-label", `Lock Down time remaining: ${display}`);
+  }
+  if (lockdownHeaderStatus) {
+    lockdownHeaderStatus.hidden = false;
+    lockdownHeaderStatus.textContent = display;
+  }
+}
+
+function armLockDownTicker() {
+  disarmLockDownTicker();
+  lockdownTickerHandle = setInterval(paintLockDownCountdown, 1000);
+}
+
+function disarmLockDownTicker() {
+  if (lockdownTickerHandle != null) {
+    clearInterval(lockdownTickerHandle);
+    lockdownTickerHandle = null;
   }
 }
 

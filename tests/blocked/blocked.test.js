@@ -187,6 +187,123 @@ describe("blocked page — shared timer state: external writes (ADR-0002)", () =
   });
 });
 
+describe("blocked page — Lock Down session lifecycle (#25)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    document.body.innerHTML = "";
+  });
+
+  it("natural work-phase completion clears focusSessionActive/focusSessionEndsAt from storage.local", async () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    // Seed a RUNNING work phase 2s away from natural completion, plus an
+    // armed Lock Down session.
+    await mountBlocked({
+      focusSessionActive: true,
+      focusSessionEndsAt: now + 60 * 60000,
+      MindfulBrowse_timer_state: {
+        phase: "work",
+        currentRound: 1,
+        totalRounds: 4,
+        totalTime: 1500,
+        isRunning: true,
+        endsAt: now + 2000,
+        remaining: null,
+        savedAt: now,
+      },
+    });
+
+    expect(document.getElementById("timer-digits").textContent).toBe("00:02");
+
+    await vi.advanceTimersByTimeAsync(2100);
+    await flushMicrotasks();
+
+    // The phase advanced to the short break...
+    expect(document.getElementById("phase-text").textContent).toBe("Short Break");
+    // ...and the Lock Down session was cleared.
+    const data = await chrome.storage.local.get(["focusSessionActive", "focusSessionEndsAt"]);
+    expect(data.focusSessionActive).toBe(false);
+    expect(data.focusSessionEndsAt).toBe(null);
+  });
+
+  it("manual skip of the work phase does NOT clear the focus session", async () => {
+    const endsAt = Date.now() + 60 * 60000;
+    await mountBlocked({ focusSessionActive: true, focusSessionEndsAt: endsAt });
+
+    vi.useFakeTimers();
+    document.getElementById("btn-skip").click();
+    await flushMicrotasks();
+
+    // The phase advanced (skip worked)...
+    expect(document.getElementById("phase-text").textContent).toBe("Short Break");
+    // ...but the session is untouched.
+    const data = await chrome.storage.local.get(["focusSessionActive", "focusSessionEndsAt"]);
+    expect(data.focusSessionActive).toBe(true);
+    expect(data.focusSessionEndsAt).toBe(endsAt);
+  });
+
+  it("natural break-phase completion does NOT clear the focus session (work-only rule)", async () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    const endsAt = now + 60 * 60000;
+    // Seed a PAUSED short break with 2s left; starting it and letting it
+    // complete naturally must not touch the session keys.
+    await mountBlocked({
+      focusSessionActive: true,
+      focusSessionEndsAt: endsAt,
+      MindfulBrowse_timer_state: {
+        phase: "shortBreak",
+        currentRound: 2,
+        totalRounds: 4,
+        totalTime: 300,
+        isRunning: false,
+        endsAt: null,
+        remaining: 2,
+        savedAt: now,
+      },
+    });
+
+    expect(document.getElementById("phase-text").textContent).toBe("Short Break");
+    document.getElementById("btn-start").click();
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(2100);
+    await flushMicrotasks();
+
+    // Back in the next work round...
+    expect(document.getElementById("phase-text").textContent).toBe("Focus Time");
+    // ...and the session is untouched.
+    const data = await chrome.storage.local.get(["focusSessionActive", "focusSessionEndsAt"]);
+    expect(data.focusSessionActive).toBe(true);
+    expect(data.focusSessionEndsAt).toBe(endsAt);
+  });
+
+  it("natural work-phase completion does not fail when no session keys exist", async () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    await mountBlocked({
+      MindfulBrowse_timer_state: {
+        phase: "work",
+        currentRound: 1,
+        totalRounds: 4,
+        totalTime: 1500,
+        isRunning: true,
+        endsAt: now + 2000,
+        remaining: null,
+        savedAt: now,
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(2100);
+    await flushMicrotasks();
+
+    expect(document.getElementById("phase-text").textContent).toBe("Short Break");
+    // The clear-write still lands harmlessly as the canonical idle values.
+    const data = await chrome.storage.local.get(["focusSessionActive", "focusSessionEndsAt"]);
+    expect(data.focusSessionActive).toBe(false);
+    expect(data.focusSessionEndsAt).toBe(null);
+  });
+});
+
 describe("blocked page — flip clock", () => {
   beforeEach(async () => {
     await mountBlocked();
