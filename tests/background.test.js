@@ -5,6 +5,7 @@ import {
   triggerOnInstalled,
   FAKE_EXTENSION_ID,
 } from "./helpers/chrome-mock.js";
+import { BUILTIN_SITES } from "../lib/domain.js";
 
 // background.js hydrates its cache from chrome.storage at module top level
 // (an IIFE), so the mock must be installed and the module (re)imported fresh
@@ -192,7 +193,8 @@ describe("background.js — onInstalled seeding (A2 regression)", () => {
 
     const data = await chrome.storage.sync.get(null);
     expect(data.enabled).toBe(true);
-    expect(data.sites).toEqual([]);
+    // Built-in sites are seeded on fresh install
+    expect(data.sites).toEqual(BUILTIN_SITES);
     expect(data.pomodoroSettings).toEqual({
       workDuration: 25,
       shortBreak: 5,
@@ -212,7 +214,8 @@ describe("background.js — onInstalled seeding (A2 regression)", () => {
     await triggerOnInstalled({ reason: "update" });
 
     const data = await chrome.storage.sync.get(null);
-    expect(data.sites).toEqual(existingSites);
+    // Built-in sites are appended since they weren't present
+    expect(data.sites).toEqual([...existingSites, ...BUILTIN_SITES]);
     expect(data.enabled).toBe(false); // also not clobbered
   });
 
@@ -224,7 +227,8 @@ describe("background.js — onInstalled seeding (A2 regression)", () => {
     await triggerOnInstalled({ reason: "install" });
 
     const data = await chrome.storage.sync.get(null);
-    expect(data.sites).toEqual([{ domain: "example.com", active: true }]);
+    // Built-in sites are appended since they weren't present
+    expect(data.sites).toEqual([{ domain: "example.com", active: true }, ...BUILTIN_SITES]);
     expect(data.enabled).toBe(true); // backfilled
     expect(data.pomodoroSettings).toEqual({
       workDuration: 25,
@@ -237,7 +241,7 @@ describe("background.js — onInstalled seeding (A2 regression)", () => {
   it("does not write to storage at all if every DEFAULTS key is already present", async () => {
     await chrome.storage.sync.set({
       enabled: true,
-      sites: [],
+      sites: [...BUILTIN_SITES],
       pomodoroSettings: { workDuration: 25, shortBreak: 5, longBreak: 15, roundsBeforeLong: 4 },
     });
     await loadBackground();

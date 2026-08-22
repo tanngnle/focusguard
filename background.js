@@ -6,6 +6,7 @@
 
 import { matchSite } from "./lib/matcher.js";
 import { getFrictionConfig } from "./lib/friction-rules.js";
+import { BUILTIN_SITES } from "./lib/domain.js";
 
 // Default settings
 const DEFAULTS = {
@@ -53,6 +54,10 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
  * existing value) is never clobbered — only keys that are
  * genuinely missing get backfilled, including new DEFAULTS keys
  * introduced in a later version.
+ *
+ * Also seeds built-in sites (YouTube, Facebook) into the sites
+ * array. Existing user-added sites are preserved; built-in sites
+ * are only added if not already present (by domain).
  */
 chrome.runtime.onInstalled.addListener(async () => {
   const data = await chrome.storage.sync.get(null);
@@ -60,6 +65,15 @@ chrome.runtime.onInstalled.addListener(async () => {
   for (const key of Object.keys(DEFAULTS)) {
     if (data[key] === undefined) toSet[key] = DEFAULTS[key];
   }
+
+  // Seed built-in sites — merge with existing sites, skip duplicates
+  const existingSites = data.sites || toSet.sites || [];
+  const existingDomains = new Set(existingSites.map((s) => s.domain));
+  const newBuiltins = BUILTIN_SITES.filter((s) => !existingDomains.has(s.domain));
+  if (newBuiltins.length > 0) {
+    toSet.sites = [...existingSites, ...newBuiltins];
+  }
+
   if (Object.keys(toSet).length > 0) {
     await chrome.storage.sync.set(toSet);
   }

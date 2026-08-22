@@ -3,7 +3,7 @@
     Manages blocked sites list, toggles, and settings
     ═══════════════════════════════════════════════════════ */
 
-import { normalizeDomain, isValidDomain } from "../lib/domain.js";
+import { normalizeDomain, isValidDomain, isBuiltinSite, getBuiltinSite } from "../lib/domain.js";
 import { getAvailableElements } from "../lib/stripping-rules.js";
 import { getFrictionConfig } from "../lib/friction-rules.js";
 import {
@@ -544,9 +544,14 @@ async function addSite() {
   const data = await chrome.storage.sync.get(["sites"]);
   const sites = data.sites || [];
 
-  // Check for duplicates
+  // Check for duplicates (including built-in sites)
   if (sites.some((s) => s.domain === domain)) {
-    showHint("This site is already blocked", false);
+    showHint("This site is already in your list", false);
+    return;
+  }
+
+  if (isBuiltinSite(domain)) {
+    showHint(`${domain} is already available — just toggle it on`, false);
     return;
   }
 
@@ -604,6 +609,19 @@ function buildAvatar(domain) {
   return avatar;
 }
 
+// ── Built-in Platform Icon ──────────────────────────────
+// Renders a colored icon for built-in platforms (YouTube, Facebook).
+// Uses the platform's brand color and a recognizable symbol.
+function buildBuiltinIcon(builtin) {
+  const icon = document.createElement("div");
+  icon.className = "site-favicon builtin-icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.style.background = builtin.color;
+  icon.style.color = "#fff";
+  icon.textContent = builtin.icon;
+  return icon;
+}
+
 // ── Render Sites ────────────────────────────────────────
 function renderSites(sites) {
   // Clear existing cards (keep empty state)
@@ -624,17 +642,18 @@ function renderSites(sites) {
   });
 }
 
-// ── Build Site Card ─────────────────────────────────────
+// ── Build Site Card ────────────────────────────────────
 function buildSiteCard(site) {
+  const builtin = getBuiltinSite(site.domain);
   const card = document.createElement("div");
-  card.className = `site-card ${site.active ? "" : "inactive"}`;
+  card.className = `site-card ${site.active ? "" : "inactive"}${builtin ? " builtin" : ""}`;
   card.dataset.domain = site.domain;
 
-  const favicon = buildAvatar(site.domain);
+  const favicon = builtin ? buildBuiltinIcon(builtin) : buildAvatar(site.domain);
 
   const domainLabel = document.createElement("span");
   domainLabel.className = "site-domain";
-  domainLabel.textContent = site.domain;
+  domainLabel.textContent = builtin ? builtin.label : site.domain;
 
   const toggleLabel = document.createElement("label");
   toggleLabel.className = "site-toggle";
@@ -643,7 +662,7 @@ function buildSiteCard(site) {
   toggle.checked = !!site.active;
   toggle.setAttribute("aria-label", `Enable blocking for ${site.domain}`);
   const toggleSlider = document.createElement("span");
-  toggleSlider.className = "toggle-slider";
+  toggleSlider.className = `toggle-slider${builtin ? " builtin-toggle" : ""}`;
   toggleLabel.appendChild(toggle);
   toggleLabel.appendChild(toggleSlider);
 
@@ -678,7 +697,10 @@ function buildSiteCard(site) {
   card.appendChild(domainLabel);
   card.appendChild(toggleLabel);
   card.appendChild(modeToggle);
-  card.appendChild(deleteBtn);
+  // Built-in sites cannot be deleted — skip the delete button
+  if (!builtin) {
+    card.appendChild(deleteBtn);
+  }
 
   // ─ Friction Level Selector ───────────────────────────
   // Only shown when in block mode. Levels 1, 2, 3.
