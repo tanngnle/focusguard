@@ -245,8 +245,8 @@ describe("popup.js — intervention mode", () => {
     await mountPopup({
       enabled: true,
       sites: [
-        { domain: "youtube.com", active: true, interventionMode: "strip" },
-        { domain: "twitter.com", active: true, interventionMode: "block" },
+        { domain: "youtube.com", active: true, restrictionLevel: "strip" },
+        { domain: "twitter.com", active: true, restrictionLevel: "block" },
       ],
     });
 
@@ -269,32 +269,49 @@ describe("popup.js — intervention mode", () => {
     expect(twitterModeValue.textContent).toBe("block");
   });
 
-  it("toggling intervention mode updates storage", async () => {
+  it("toggling restriction level cycles strip \u2192 friction \u2192 block", async () => {
     await mountPopup({
       enabled: true,
       sites: [
-        { domain: "youtube.com", active: true, interventionMode: "strip" },
+        { domain: "youtube.com", active: true, restrictionLevel: "strip" },
       ],
     });
-
-    const youtubeCard = document.querySelector('.site-card[data-domain="youtube.com"]');
-    const modeToggle = youtubeCard.querySelector('.intervention-mode-toggle');
-    const modeButton = modeToggle.querySelector('.mode-button');
-
-    // Click to toggle from strip to block
-    modeButton.click();
+  
+    function getModeButton() {
+      const card = document.querySelector('.site-card[data-domain="youtube.com"]');
+      return card.querySelector('.intervention-mode-toggle .mode-button');
+    }
+  
+    // Click to toggle from strip to friction
+    getModeButton().click();
     await flushMicrotasks();
-
-    const data = await chrome.storage.sync.get(["sites"]);
-    const youtubeSite = data.sites.find((s) => s.domain === "youtube.com");
-    expect(youtubeSite.interventionMode).toBe("block");
+  
+    let data = await chrome.storage.sync.get(["sites"]);
+    let youtubeSite = data.sites.find((s) => s.domain === "youtube.com");
+    expect(youtubeSite.restrictionLevel).toBe("friction");
+  
+    // Click again: friction \u2192 block
+    getModeButton().click();
+    await flushMicrotasks();
+  
+    data = await chrome.storage.sync.get(["sites"]);
+    youtubeSite = data.sites.find((s) => s.domain === "youtube.com");
+    expect(youtubeSite.restrictionLevel).toBe("block");
+  
+    // Click again: block \u2192 strip (full cycle)
+    getModeButton().click();
+    await flushMicrotasks();
+  
+    data = await chrome.storage.sync.get(["sites"]);
+    youtubeSite = data.sites.find((s) => s.domain === "youtube.com");
+    expect(youtubeSite.restrictionLevel).toBe("strip");
   });
 
   it("shows element-level toggles for YouTube in strip mode", async () => {
     await mountPopup({
       enabled: true,
       sites: [
-        { domain: "youtube.com", active: true, interventionMode: "strip" },
+        { domain: "youtube.com", active: true, restrictionLevel: "strip" },
       ],
     });
 
@@ -320,7 +337,7 @@ describe("popup.js — intervention mode", () => {
     await mountPopup({
       enabled: true,
       sites: [
-        { domain: "twitter.com", active: true, interventionMode: "strip" },
+        { domain: "twitter.com", active: true, restrictionLevel: "strip" },
       ],
     });
 

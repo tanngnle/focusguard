@@ -680,16 +680,16 @@ function buildSiteCard(site) {
   // ── Intervention Mode Toggle ──────────────────────────
   // Strip (default) vs Block. Shown as a clickable button
   // that cycles between modes.
-  const interventionMode = site.interventionMode || "strip";
+  const restrictionLevel = site.restrictionLevel || site.interventionMode || "strip";
   const modeToggle = document.createElement("div");
   modeToggle.className = "intervention-mode-toggle";
   const modeButton = document.createElement("button");
   modeButton.className = "mode-button";
-  modeButton.title = `Current mode: ${interventionMode}. Click to toggle.`;
-  modeButton.setAttribute("aria-label", `Intervention mode for ${site.domain}`);
+  modeButton.title = `Current mode: ${restrictionLevel}. Click to toggle.`;
+  modeButton.setAttribute("aria-label", `Restriction level for ${site.domain}`);
   const modeValue = document.createElement("span");
   modeValue.className = "mode-value";
-  modeValue.textContent = interventionMode;
+  modeValue.textContent = restrictionLevel;
   modeButton.appendChild(modeValue);
   modeToggle.appendChild(modeButton);
 
@@ -702,31 +702,27 @@ function buildSiteCard(site) {
     card.appendChild(deleteBtn);
   }
 
-  // ─ Friction Level Selector ───────────────────────────
-  // Only shown when in block mode. Levels 1, 2, 3.
-  if (interventionMode === "block") {
-    const frictionLevel = site.frictionLevel || 3;
+  // ─ Friction Delay Selector ───────────────────────────
+  // Only shown when in friction mode.
+  if (restrictionLevel === "friction") {
+    const frictionDelay = site.frictionDelay || 10;
     const frictionSelect = document.createElement("select");
     frictionSelect.className = "friction-level-select";
-    frictionSelect.setAttribute("aria-label", `Friction level for ${site.domain}`);
-
-    [1, 2, 3].forEach((level) => {
+    frictionSelect.setAttribute("aria-label", `Friction delay for ${site.domain}`);
+  
+    [5, 30, 60].forEach((secs) => {
       const option = document.createElement("option");
-      option.value = level;
-      option.textContent = `Level ${level}: ${getFrictionConfig(level).description}`;
-      option.selected = level === frictionLevel;
+      option.value = secs;
+      option.textContent = `${secs} seconds`;
+      option.selected = secs === frictionDelay;
       frictionSelect.appendChild(option);
     });
-
+  
     frictionSelect.addEventListener("change", () => {
-      // Capture the chosen value at event time: the queued mutation must
-      // apply exactly the user action that enqueued it, never whatever the
-      // (possibly re-rendered or replaced) control shows by the time the
-      // mutation actually runs.
-      const level = parseInt(frictionSelect.value);
-      queueSiteMutation(() => setFrictionLevel(site.domain, level));
+      const delay = parseInt(frictionSelect.value);
+      queueSiteMutation(() => setFrictionDelay(site.domain, delay));
     });
-
+  
     card.appendChild(frictionSelect);
   }
 
@@ -734,7 +730,7 @@ function buildSiteCard(site) {
   // Only shown for supported platforms (YouTube, Facebook)
   // when in strip mode.
   const availableElements = getAvailableElements(site.domain);
-  if (availableElements && interventionMode === "strip") {
+  if (availableElements && restrictionLevel === "strip") {
     const elementToggles = document.createElement("div");
     elementToggles.className = "element-toggles";
     const profile = site.strippingProfile || {};
@@ -778,9 +774,9 @@ function buildSiteCard(site) {
     queueSiteMutation(() => toggleSite(site.domain, active));
   });
 
-  // Intervention mode handler — cycles between strip and block
+  // Restriction level handler — cycles between strip, friction, and block
   modeButton.addEventListener("click", () =>
-    queueSiteMutation(() => toggleInterventionMode(site.domain, interventionMode))
+    queueSiteMutation(() => toggleRestrictionLevel(site.domain, restrictionLevel))
   );
 
   // Delete handler — keyed by domain, not index (see removeSite), and
@@ -844,15 +840,20 @@ async function removeSite(domain) {
   renderSites(sites);
 }
 
-// ── Toggle Intervention Mode ────────────────────────────
-// Cycles between 'strip' and 'block' modes for a site.
-async function toggleInterventionMode(domain, currentMode) {
+// ── Toggle Restriction Level ────────────────────────────
+// Cycles between 'strip', 'friction', and 'block' modes for a site.
+async function toggleRestrictionLevel(domain, currentLevel) {
   const data = await chrome.storage.sync.get(["sites"]);
   const sites = data.sites || [];
   const site = sites.find((s) => s.domain === domain);
   if (!site) return;
 
-  site.interventionMode = currentMode === "strip" ? "block" : "strip";
+  const cycle = { strip: "friction", friction: "block", block: "strip" };
+  site.restrictionLevel = cycle[currentLevel] || "strip";
+  // Clean up old keys
+  delete site.interventionMode;
+  delete site.frictionLevel;
+  if (site.restrictionLevel !== "friction") delete site.frictionDelay;
   suppressNextSitesChange = true;
   const ok = await setStorage({ sites });
   if (!ok) {
@@ -884,15 +885,15 @@ async function toggleElement(domain, elementName, enabled) {
   }
 }
 
-// ─ Set Friction Level ──────────────────────────────────
-// Updates the friction level for a site (1, 2, or 3).
-async function setFrictionLevel(domain, level) {
+// ─ Set Friction Delay ──────────────────────────────────
+// Updates the friction delay in seconds for a site.
+async function setFrictionDelay(domain, delay) {
   const data = await chrome.storage.sync.get(["sites"]);
   const sites = data.sites || [];
   const site = sites.find((s) => s.domain === domain);
   if (!site) return;
 
-  site.frictionLevel = level;
+  site.frictionDelay = delay;
   suppressNextSitesChange = true;
   const ok = await setStorage({ sites });
   if (!ok) {

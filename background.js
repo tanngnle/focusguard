@@ -7,6 +7,7 @@
 import { matchSite } from "./lib/matcher.js";
 import { getFrictionConfig } from "./lib/friction-rules.js";
 import { BUILTIN_SITES } from "./lib/domain.js";
+import { migrateStorage, CURRENT_SCHEMA_VERSION } from "./lib/storage-migration.js";
 
 // Default settings
 const DEFAULTS = {
@@ -18,6 +19,10 @@ const DEFAULTS = {
     longBreak: 15,
     roundsBeforeLong: 4,
   },
+  schemaVersion: CURRENT_SCHEMA_VERSION,
+  focusSessionActive: false,
+  focusSessionEndsAt: null,
+  proLicense: null,
 };
 
 // ── Hot-Path Cache ──────────────────────────────────────
@@ -60,8 +65,25 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
  * are only added if not already present (by domain).
  */
 chrome.runtime.onInstalled.addListener(async () => {
-  const data = await chrome.storage.sync.get(null);
+  let data = await chrome.storage.sync.get(null);
   const toSet = {};
+
+  // ── Schema migration (v0 → v1) ──────────────────────
+  // Runs once per user: converts interventionMode/frictionLevel
+  // to restrictionLevel/frictionDelay and stamps schemaVersion.
+  if (data.schemaVersion === undefined) {
+    const migrated = migrateStorage(data);
+    // Write back every key that changed
+    for (const key of Object.keys(migrated)) {
+      if (JSON.stringify(migrated[key]) !== JSON.stringify(data[key])) {
+        toSet[key] = migrated[key];
+      }
+    }
+    // Refresh data so the DEFAULTS backfill below sees migrated values
+    data = { ...data, ...toSet };
+  }
+
+  // ── DEFAULTS backfill ───────────────────────────────
   for (const key of Object.keys(DEFAULTS)) {
     if (data[key] === undefined) toSet[key] = DEFAULTS[key];
   }
@@ -97,32 +119,32 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     const matchedSite = matchSite(details.url, cache.sites);
     if (!matchedSite) return;
 
-    // Determine intervention mode (strip vs block)
-    const interventionMode = matchedSite.interventionMode || "strip";
+    // Determine restriction level (strip vs friction vs block)
+    const restrictionLevel = matchedSite.restrictionLevel || matchedSite.interventionMode || "strip";
 
     // If in strip mode, don't redirect — let content script handle it
-    if (interventionMode === "strip") {
+    if (restrictionLevel === "strip") {
       return;
     }
 
-    // Get friction level (default to 3 for backward compatibility)
-    const frictionLevel = matchedSite.frictionLevel || 3;
-    const frictionConfig = getFrictionConfig(frictionLevel);
-
-    let redirectUrl;
-
-    if (frictionConfig.type === "interstitial") {
-      // Level 1: Breathing delay
+    // Get friction config for friction mode
+    if (restrictionLevel === "friction") {
+      const delaySeconds = matchedSite.frictionDelay || 10;
       const breathingPageUrl = chrome.runtime.getURL("blocked/breathing.html");
-      redirectUrl = `${breathingPageUrl}?domain=${encodeURIComponent(matchedSite.domain)}&delay=${frictionConfig.delaySeconds}`;
-    } else {
-      // Level 3: Hard block (redirect to Pomodoro timer)
-      const blockedPageUrl = chrome.runtime.getURL("blocked/blocked.html");
-      redirectUrl = `${blockedPageUrl}?domain=${encodeURIComponent(matchedSite.domain)}`;
+      const redirectUrl = `${breathingPageUrl}?domain=${encodeURIComponent(matchedSite.domain)}&delay=${delaySeconds}`;
+      try {
+        await chrome.tabs.update(details.tabId, { url: redirectUrl });
+      } catch (err) {
+        // Tab may have closed mid-navigation — nothing to redirect.
+      }
+      return;
     }
 
+    // Block mode: redirect to Pomodoro timer
+    const blockedPageUrl = chrome.runtime.getURL("blocked/blocked.html");
+    const redirectUrl = `${blockedPageUrl}?domain=${encodeURIComponent(matchedSite.domain)}`;
+
     try {
-      // Use chrome.tabs.update to redirect
       await chrome.tabs.update(details.tabId, { url: redirectUrl });
     } catch (err) {
       // Tab may have closed mid-navigation — nothing to redirect.
