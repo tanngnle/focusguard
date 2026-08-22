@@ -32,7 +32,7 @@
         "*://*.facebook.com/*"
       ],
       "js": ["content/stripping.js", "content/reintervention.js"],
-      "run_at": "document_idle",
+      "run_at": "document_start",
       "type": "module"
     }
   ],
