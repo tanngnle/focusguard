@@ -40,6 +40,37 @@
     <!-- Blocklist tab panel -->
     <div role="tabpanel" id="tab-panel-sites" aria-labelledby="tab-btn-sites">
 
+    <!-- Lock Down Panel (#25) — collapsible, collapsed by default -->
+    <section class="lockdown-section">
+      <button type="button" class="lockdown-toggle" id="lockdown-toggle" aria-expanded="false" aria-controls="lockdown-panel">
+        <span class="lockdown-indicator" id="lockdown-indicator" aria-hidden="true"></span>
+        <span class="lockdown-title">Lock Down</span>
+        <span class="lockdown-header-status" id="lockdown-header-status" hidden></span>
+        <svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+      </button>
+
+      <div class="lockdown-panel" id="lockdown-panel">
+        <!-- Idle state: pick a duration, start the session -->
+        <div class="lockdown-idle" id="lockdown-idle">
+          <select id="lockdown-duration" class="lockdown-duration" aria-label="Lock Down duration">
+            <option value="15">15 min</option>
+            <option value="25" selected>25 min</option>
+            <option value="45">45 min</option>
+            <option value="60">60 min</option>
+          </select>
+          <button type="button" class="lockdown-btn lockdown-btn-start" id="lockdown-start-btn" aria-label="Start Lock Down session">Start</button>
+        </div>
+        <!-- Active state: live countdown + stop -->
+        <div class="lockdown-active" id="lockdown-active" hidden>
+          <span class="lockdown-countdown" id="lockdown-countdown" aria-label="Lock Down time remaining">--:--</span>
+          <span class="lockdown-note">All sites &rarr; Block mode</span>
+          <button type="button" class="lockdown-btn lockdown-btn-stop" id="lockdown-stop-btn" aria-label="Stop Lock Down session">Stop</button>
+        </div>
+      </div>
+    </section>
+
     <!-- Add Website Section -->
     <section class="add-site-section">
       <div class="input-group">

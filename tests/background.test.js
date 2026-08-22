@@ -16,9 +16,12 @@ async function loadBackground() {
   vi.resetModules();
   const mod = await import("../background.js");
   // Let the top-level hydration IIFE's microtasks settle so `hydrated` flips
-  // true before the test starts firing navigations.
-  await Promise.resolve();
-  await Promise.resolve();
+  // true before the test starts firing navigations. Sized generously: the
+  // session-expiry path (#25) awaits an extra storage.local.set after the
+  // two storage.get reads, and over-flushing settled promises is harmless.
+  for (let i = 0; i < 12; i++) {
+    await Promise.resolve();
+  }
   return mod;
 }
 
@@ -241,7 +244,10 @@ describe("background.js — Lock Down override (#25 pre-wiring)", () => {
       enabled: true,
       sites: [{ domain: "youtube.com", active: true, restrictionLevel: "strip" }],
     });
-    await chrome.storage.local.set({ focusSessionActive: true });
+    await chrome.storage.local.set({
+      focusSessionActive: true,
+      focusSessionEndsAt: Date.now() + 10 * 60000,
+    });
     await loadBackground();
 
     await triggerNavigation({ url: "https://www.youtube.com/", tabId: 4 });
@@ -259,7 +265,10 @@ describe("background.js — Lock Down override (#25 pre-wiring)", () => {
       enabled: true,
       sites: [{ domain: "youtube.com", active: true, restrictionLevel: "friction", frictionDelay: 10 }],
     });
-    await chrome.storage.local.set({ focusSessionActive: true });
+    await chrome.storage.local.set({
+      focusSessionActive: true,
+      focusSessionEndsAt: Date.now() + 10 * 60000,
+    });
     await loadBackground();
 
     await triggerNavigation({ url: "https://www.youtube.com/", tabId: 4 });
@@ -280,9 +289,13 @@ describe("background.js — Lock Down override (#25 pre-wiring)", () => {
     // Session not active yet: strip falls through, no redirect.
     await triggerNavigation({ url: "https://www.youtube.com/", tabId: 4 });
     expect(chrome.tabs.update).not.toHaveBeenCalled();
-
-    // Lock Down starts — written to chrome.storage.local.
-    await chrome.storage.local.set({ focusSessionActive: true });
+    // Lock Down starts — written to chrome.storage.local with a valid
+    // (future) deadline; an expired/missing deadline would be cleared by
+    // the onChanged expiry gate instead of arming the override.
+    await chrome.storage.local.set({
+      focusSessionActive: true,
+      focusSessionEndsAt: Date.now() + 10 * 60000,
+    });
 
     await triggerNavigation({ url: "https://www.youtube.com/", tabId: 4 });
     expect(chrome.tabs.update).toHaveBeenCalledTimes(1);
@@ -294,6 +307,133 @@ describe("background.js — Lock Down override (#25 pre-wiring)", () => {
 
     await triggerNavigation({ url: "https://www.youtube.com/", tabId: 4 });
     expect(chrome.tabs.update).toHaveBeenCalledTimes(1); // unchanged
+  });
+});
+
+describe("background.js — Lock Down session expiry (#25)", () => {
+  beforeEach(() => {
+    resetChromeMock();
+  });
+
+  it("hydration clears an active session whose deadline already passed", async () => {
+    await chrome.storage.sync.set({
+      enabled: true,
+      sites: [{ domain: "youtube.com", active: true, restrictionLevel: "strip" }],
+    });
+    await chrome.storage.local.set({
+      focusSessionActive: true,
+      focusSessionEndsAt: Date.now() - 60000, // expired while the worker slept
+    });
+    await loadBackground();
+
+    // Both keys are rewritten to storage.local (which also drives the
+    // cache via onChanged).
+    const local = await chrome.storage.local.get(["focusSessionActive", "focusSessionEndsAt"]);
+    expect(local.focusSessionActive).toBe(false);
+    expect(local.focusSessionEndsAt).toBe(null);
+
+    // Cache is off: the strip site falls through instead of redirecting.
+    await triggerNavigation({ url: "https://www.youtube.com/", tabId: 4 });
+    expect(chrome.tabs.update).not.toHaveBeenCalled();
+  });
+
+  it("hydration clears an active session with a missing/invalid deadline", async () => {
+    // Active flag but no deadline at all.
+    await chrome.storage.local.set({ focusSessionActive: true });
+    await loadBackground();
+
+    let local = await chrome.storage.local.get(["focusSessionActive", "focusSessionEndsAt"]);
+    expect(local.focusSessionActive).toBe(false);
+    expect(local.focusSessionEndsAt).toBe(null);
+  });
+
+  it("hydration clears an active session with a non-numeric deadline", async () => {
+    await chrome.storage.local.set({
+      focusSessionActive: true,
+      focusSessionEndsAt: "soon",
+    });
+    await loadBackground();
+
+    const local = await chrome.storage.local.get(["focusSessionActive", "focusSessionEndsAt"]);
+    expect(local.focusSessionActive).toBe(false);
+    expect(local.focusSessionEndsAt).toBe(null);
+  });
+
+  it("hydration preserves a non-expired session and keeps the override armed", async () => {
+    await chrome.storage.sync.set({
+      enabled: true,
+      sites: [{ domain: "youtube.com", active: true, restrictionLevel: "strip" }],
+    });
+    const endsAt = Date.now() + 20 * 60000;
+    await chrome.storage.local.set({ focusSessionActive: true, focusSessionEndsAt: endsAt });
+    await loadBackground();
+
+    // Session untouched.
+    const local = await chrome.storage.local.get(["focusSessionActive", "focusSessionEndsAt"]);
+    expect(local.focusSessionActive).toBe(true);
+    expect(local.focusSessionEndsAt).toBe(endsAt);
+
+    // Override still redirects.
+    await triggerNavigation({ url: "https://www.youtube.com/", tabId: 4 });
+    expect(chrome.tabs.update).toHaveBeenCalledTimes(1);
+    const [, updateProps] = chrome.tabs.update.mock.calls[0];
+    expect(updateProps.url).toContain("blocked/blocked.html");
+  });
+
+  it("onChanged expires a session whose write lands with a past deadline", async () => {
+    await chrome.storage.sync.set({
+      enabled: true,
+      sites: [{ domain: "youtube.com", active: true, restrictionLevel: "strip" }],
+    });
+    await loadBackground();
+
+    // A write that arms the flag with an already-past deadline (corrupt
+    // writer, clock skew) — the listener must neutralize it immediately.
+    await chrome.storage.local.set({
+      focusSessionActive: true,
+      focusSessionEndsAt: Date.now() - 1000,
+    });
+    for (let i = 0; i < 12; i++) await Promise.resolve();
+
+    const local = await chrome.storage.local.get(["focusSessionActive", "focusSessionEndsAt"]);
+    expect(local.focusSessionActive).toBe(false);
+    expect(local.focusSessionEndsAt).toBe(null);
+
+    await triggerNavigation({ url: "https://www.youtube.com/", tabId: 4 });
+    expect(chrome.tabs.update).not.toHaveBeenCalled();
+  });
+
+  it("onChanged expires a session when the deadline is written alone in the past", async () => {
+    await chrome.storage.sync.set({
+      enabled: true,
+      sites: [{ domain: "youtube.com", active: true, restrictionLevel: "strip" }],
+    });
+    // Flag armed first with a valid deadline...
+    await chrome.storage.local.set({
+      focusSessionActive: true,
+      focusSessionEndsAt: Date.now() + 10 * 60000,
+    });
+    await loadBackground();
+
+    // ...then the deadline gets rewritten into the past by itself.
+    await chrome.storage.local.set({ focusSessionEndsAt: Date.now() - 1000 });
+    for (let i = 0; i < 12; i++) await Promise.resolve();
+
+    const local = await chrome.storage.local.get(["focusSessionActive", "focusSessionEndsAt"]);
+    expect(local.focusSessionActive).toBe(false);
+    expect(local.focusSessionEndsAt).toBe(null);
+
+    await triggerNavigation({ url: "https://www.youtube.com/", tabId: 4 });
+    expect(chrome.tabs.update).not.toHaveBeenCalled();
+  });
+
+  it("hydration leaves an inactive session's stored keys alone", async () => {
+    await chrome.storage.local.set({ focusSessionActive: false, focusSessionEndsAt: null });
+    const setCallsBefore = chrome.storage.local.set.mock.calls.length;
+    await loadBackground();
+
+    // No expiry rewrite happened during hydration.
+    expect(chrome.storage.local.set.mock.calls.length).toBe(setCallsBefore);
   });
 });
 

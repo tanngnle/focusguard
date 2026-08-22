@@ -37,14 +37,46 @@ const DEFAULTS = {
 // is awaited as a one-time fallback if a navigation arrives before
 // the initial read completes.
 let cache = { enabled: DEFAULTS.enabled, sites: DEFAULTS.sites, focusSessionActive: false };
+// Last-seen Lock Down deadline (epoch ms). Kept alongside the cache so the
+// local onChanged handler can run the expiry check even when an event only
+// carries one of the two session keys.
+let cacheSessionEndsAt = null;
 let hydrated = false;
+
+// A Lock Down deadline is valid only when it's a finite epoch-ms number
+// still in the future. Anything else (past, null, missing, malformed)
+// means an expired or corrupt session.
+function isValidSessionDeadline(endsAt, now) {
+  return typeof endsAt === "number" && Number.isFinite(endsAt) && endsAt > now;
+}
+
+// Clear an expired session by writing both keys back to storage.local —
+// the write fires onChanged, which keeps every listener-driven cache
+// (this worker's, the popup's panel) coherent with the same code path.
+function clearExpiredSession() {
+  return chrome.storage.local.set({ focusSessionActive: false, focusSessionEndsAt: null });
+}
 
 const ready = (async () => {
   const syncData = await chrome.storage.sync.get(["enabled", "sites"]);
-  const localData = await chrome.storage.local.get(["focusSessionActive"]);
+  const localData = await chrome.storage.local.get(["focusSessionActive", "focusSessionEndsAt"]);
   if (syncData.enabled !== undefined) cache.enabled = syncData.enabled;
   if (syncData.sites !== undefined) cache.sites = syncData.sites;
-  if (localData.focusSessionActive !== undefined) {
+  if (localData.focusSessionEndsAt !== undefined) {
+    cacheSessionEndsAt = localData.focusSessionEndsAt;
+  }
+  if (localData.focusSessionActive === true) {
+    if (isValidSessionDeadline(localData.focusSessionEndsAt, Date.now())) {
+      cache.focusSessionActive = true;
+    } else {
+      // Service worker woke after the session deadline passed (or the
+      // deadline is missing/corrupt) — expire it before any navigation
+      // can observe an active Lock Down.
+      cache.focusSessionActive = false;
+      cacheSessionEndsAt = null;
+      await clearExpiredSession();
+    }
+  } else if (localData.focusSessionActive !== undefined) {
     cache.focusSessionActive = localData.focusSessionActive;
   }
   hydrated = true;
@@ -55,8 +87,21 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     if (changes.enabled) cache.enabled = changes.enabled.newValue;
     if (changes.sites) cache.sites = changes.sites.newValue;
   }
-  if (areaName === "local" && changes.focusSessionActive) {
-    cache.focusSessionActive = changes.focusSessionActive.newValue;
+  if (areaName === "local" && (changes.focusSessionActive || changes.focusSessionEndsAt)) {
+    if (changes.focusSessionEndsAt) {
+      cacheSessionEndsAt = changes.focusSessionEndsAt.newValue ?? null;
+    }
+    if (changes.focusSessionActive) {
+      cache.focusSessionActive = changes.focusSessionActive.newValue === true;
+    }
+    // Same expiry gate as hydration, applied the moment a session write
+    // lands. The clear-write's own onChanged echo flips the cache back
+    // off through this very branch (newValue false), so no loop.
+    if (cache.focusSessionActive && !isValidSessionDeadline(cacheSessionEndsAt, Date.now())) {
+      cache.focusSessionActive = false;
+      cacheSessionEndsAt = null;
+      clearExpiredSession();
+    }
   }
 });
 
