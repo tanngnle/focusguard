@@ -1,6 +1,6 @@
-/**
+﻿/**
  * chrome-mock.js — installable in-memory fake of the `chrome.*` surface
- * used by FocusGuard (background.js, popup/, blocked/).
+ * used by MindfulBrowse (background.js, popup/, blocked/).
  *
  * USAGE
  * -----

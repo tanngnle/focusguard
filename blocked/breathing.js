@@ -1,5 +1,5 @@
-/*  ══════════════════════════════════════════════════════
-    FocusGuard — Breathing Interstitial Logic
+﻿/*  ══════════════════════════════════════════════════════
+    MindfulBrowse — Breathing Interstitial Logic
     Level 1 friction: mindful delay with breathing exercise
     ═══════════════════════════════════════════════════════ */
 
@@ -54,7 +54,7 @@ continueBtn.addEventListener("click", () => {
 
   // Log intention (optional, for user reflection)
   if (intention) {
-    console.log(`FocusGuard intention for ${domain}: ${intention}`);
+    console.log(`MindfulBrowse intention for ${domain}: ${intention}`);
   }
 
   // Navigate to the original site

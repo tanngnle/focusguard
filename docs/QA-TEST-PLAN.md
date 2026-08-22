@@ -1,4 +1,4 @@
-# FocusGuard — Manual QA Test Plan
+﻿# MindfulBrowse — Manual QA Test Plan
 
 This plan covers what automated tests (`tests/`, pure-logic unit tests for
 `lib/matcher.js` / `lib/domain.js`) cannot: real browser navigation
@@ -41,18 +41,18 @@ Fill in before every test pass:
 1. Open `chrome://extensions`.
 2. Enable **Developer mode** (top-right toggle).
 3. Click **Load unpacked** and select the project root (the folder containing `manifest.json`).
-4. Confirm the "FocusGuard" card appears with no errors badge. If a red **Errors** button appears on the card, click it and record the error before proceeding — a case in this plan will likely fail for the same reason.
+4. Confirm the "MindfulBrowse" card appears with no errors badge. If a red **Errors** button appears on the card, click it and record the error before proceeding — a case in this plan will likely fail for the same reason.
 
 After editing `background.js` or `manifest.json`, click the circular **Reload** icon on the extension card — service worker changes are not hot-reloaded. Editing `popup/*` or `blocked/*` only requires reopening the popup / reloading the blocked tab.
 
 ### 1.3 The three DevTools consoles
 
-FocusGuard runs as three isolated contexts that only talk to each other through `chrome.storage`. Each needs its own console open to observe:
+MindfulBrowse runs as three isolated contexts that only talk to each other through `chrome.storage`. Each needs its own console open to observe:
 
 | Surface | How to open its console |
 |---|---|
-| **Service worker** (`background.js`) | `chrome://extensions` → FocusGuard card → **Inspect views: service worker** (link appears only while the worker is alive; if it says "service worker (inactive)", click it to wake and inspect it) |
-| **Popup** (`popup/popup.js`) | Right-click the FocusGuard toolbar icon → **Inspect popup**. The popup closes if you click outside it, which also kills this DevTools window — reopen both together. |
+| **Service worker** (`background.js`) | `chrome://extensions` → MindfulBrowse card → **Inspect views: service worker** (link appears only while the worker is alive; if it says "service worker (inactive)", click it to wake and inspect it) |
+| **Popup** (`popup/popup.js`) | Right-click the MindfulBrowse toolbar icon → **Inspect popup**. The popup closes if you click outside it, which also kills this DevTools window — reopen both together. |
 | **Blocked page** (`blocked/blocked.js`) | Navigate a tab to a blocked site so it redirects, then open normal DevTools (F12) on that tab, same as any web page |
 
 ### 1.4 Inspecting persisted state
@@ -61,7 +61,7 @@ Run in **any** of the three consoles above (storage is shared across contexts):
 
 ```js
 chrome.storage.sync.get(null)    // { enabled, sites: [...], pomodoroSettings }
-chrome.storage.local.get(null)   // { focusguard_timer_state }
+chrome.storage.local.get(null)   // { MindfulBrowse_timer_state }
 ```
 
 To seed or corrupt state for a test (e.g. simulating an upgrade or a stale saved session):
@@ -69,7 +69,7 @@ To seed or corrupt state for a test (e.g. simulating an upgrade or a stale saved
 ```js
 chrome.storage.sync.set({ sites: [{ domain: "example.com", active: true }] })
 chrome.storage.local.set({
-  focusguard_timer_state: { /* ... */ savedAt: Date.now() - 3 * 60 * 60 * 1000 }
+  MindfulBrowse_timer_state: { /* ... */ savedAt: Date.now() - 3 * 60 * 60 * 1000 }
 })
 ```
 
@@ -79,8 +79,8 @@ chrome.storage.local.set({
 
 | ID | Preconditions | Steps | Expected |
 |---|---|---|---|
-| `INST-01` | Extension not currently loaded; no prior FocusGuard storage in this Chrome profile | 1. Load unpacked per §1.2. 2. Open the service worker console. 3. Run `chrome.storage.sync.get(null)`. | Returns `{ enabled: true, sites: [], pomodoroSettings: { workDuration: 25, shortBreak: 5, longBreak: 15, roundsBeforeLong: 4 } }`. |
-| `INST-02` — **upgrade must not clobber an existing site list** | Extension already loaded | 1. In any console, run `chrome.storage.sync.set({ sites: [{ domain: "example.com", active: true }, { domain: "news.ycombinator.com", active: false }], pomodoroSettings: { workDuration: 40, shortBreak: 10, longBreak: 20, roundsBeforeLong: 3 } })`. 2. Go to `chrome://extensions` and click **Reload** on the FocusGuard card (this re-fires `onInstalled` with reason `"update"`, the same hook a real version bump uses). 3. Re-run `chrome.storage.sync.get(null)`. | The `sites` array and `pomodoroSettings` are **byte-for-byte unchanged** from step 1 — both `example.com` (active) and `news.ycombinator.com` (inactive) are still present, custom durations intact. Nothing was reset to defaults. |
+| `INST-01` | Extension not currently loaded; no prior MindfulBrowse storage in this Chrome profile | 1. Load unpacked per §1.2. 2. Open the service worker console. 3. Run `chrome.storage.sync.get(null)`. | Returns `{ enabled: true, sites: [], pomodoroSettings: { workDuration: 25, shortBreak: 5, longBreak: 15, roundsBeforeLong: 4 } }`. |
+| `INST-02` — **upgrade must not clobber an existing site list** | Extension already loaded | 1. In any console, run `chrome.storage.sync.set({ sites: [{ domain: "example.com", active: true }, { domain: "news.ycombinator.com", active: false }], pomodoroSettings: { workDuration: 40, shortBreak: 10, longBreak: 20, roundsBeforeLong: 3 } })`. 2. Go to `chrome://extensions` and click **Reload** on the MindfulBrowse card (this re-fires `onInstalled` with reason `"update"`, the same hook a real version bump uses). 3. Re-run `chrome.storage.sync.get(null)`. | The `sites` array and `pomodoroSettings` are **byte-for-byte unchanged** from step 1 — both `example.com` (active) and `news.ycombinator.com` (inactive) are still present, custom durations intact. Nothing was reset to defaults. |
 | `INST-03` — partial-key backfill | Extension loaded | 1. Run `chrome.storage.sync.remove(["pomodoroSettings"])` while leaving `sites` populated (reuse state from `INST-02`). 2. Reload the extension. 3. Re-check `chrome.storage.sync.get(null)`. | `pomodoroSettings` is backfilled to the default `{25, 5, 15, 4}` (it was genuinely missing), but `sites` is **untouched** — confirms defaults are merged per-key, not as an all-or-nothing overwrite. |
 
 ---
@@ -103,7 +103,7 @@ Preconditions common to all rows unless stated otherwise: extension loaded, mast
 | `BLK-10` | `reddit.com` active, **master toggle switched OFF** in popup | `https://reddit.com/` | **Not blocked** — global disable short-circuits before the site list is even checked |
 | `BLK-11` | `reddit.com` present but its **per-site toggle switched OFF** (master toggle stays on) | `https://reddit.com/` | **Not blocked** — inactive entries are skipped |
 | `BLK-12` — iframe must not redirect the parent tab | `reddit.com` active | Create a scratch local HTML file: `<iframe src="https://reddit.com"></iframe>`, open it as a tab (`file://…` or drag into Chrome). | The **parent tab does not redirect** (frame ID ≠ 0 is explicitly ignored). The iframe itself loads whatever `reddit.com` serves, unblocked — this is expected, not a bug, since the extension only inspects top-level navigations |
-| `BLK-13` | `reddit.com` active | Open an **Incognito** window (`Ctrl+Shift+N`) and navigate to `https://reddit.com/` | **Not blocked** by default — confirm at `chrome://extensions` → FocusGuard → Details that **"Allow in incognito" is OFF**. This is expected default MV3 behavior, not a bug. Repeat with the toggle switched ON to confirm blocking *does* work once explicitly allowed. |
+| `BLK-13` | `reddit.com` active | Open an **Incognito** window (`Ctrl+Shift+N`) and navigate to `https://reddit.com/` | **Not blocked** by default — confirm at `chrome://extensions` → MindfulBrowse → Details that **"Allow in incognito" is OFF**. This is expected default MV3 behavior, not a bug. Repeat with the toggle switched ON to confirm blocking *does* work once explicitly allowed. |
 
 ---
 
@@ -181,7 +181,7 @@ Tip: For any case requiring a full phase or cycle, first set short durations in 
 | `TMR-08` | Completion chime | Let a short (1 min) Work phase run to natural completion without touching anything. | A four-note ascending chime plays via Web Audio at the moment the phase completes (the ring also does a brief pulse animation) |
 | `TMR-09` | Progress ring matches remaining time | Start a timer, observe the ring at roughly 75%, 50%, 25%, and 0% remaining. | The ring's filled arc visually tracks the fraction of time remaining at each checkpoint — full ring at start, empty at `00:00`, no jumps or mismatches vs. the digital readout |
 | `TMR-10` | Resume-on-reload while paused | Start, let it run a bit, click **Pause**, reload the tab. | On reload, the exact paused `timeRemaining` is restored unchanged (no time is subtracted for a paused/non-running state) and the timer stays paused |
-| `TMR-11` | Stale saved state discarded (>2h) | 1. Start the timer briefly then pause it. 2. In console: `chrome.storage.local.get(["focusguard_timer_state"])`, copy the object, then `chrome.storage.local.set({focusguard_timer_state: {...copy, savedAt: Date.now() - 3*60*60*1000}})` to backdate it 3 hours. 3. Reload the tab. | The backdated state is discarded — the page falls back to a fresh default timer (Work phase, round 1, full duration) instead of restoring the stale saved values |
+| `TMR-11` | Stale saved state discarded (>2h) | 1. Start the timer briefly then pause it. 2. In console: `chrome.storage.local.get(["MindfulBrowse_timer_state"])`, copy the object, then `chrome.storage.local.set({MindfulBrowse_timer_state: {...copy, savedAt: Date.now() - 3*60*60*1000}})` to backdate it 3 hours. 3. Reload the tab. | The backdated state is discarded — the page falls back to a fresh default timer (Work phase, round 1, full duration) instead of restoring the stale saved values |
 
 ---
 
@@ -204,18 +204,18 @@ Tip: For any case requiring a full phase or cycle, first set short durations in 
 Covers the v1.1.0 redesign: the popup is segmented into a **Blocklist** tab
 and a **Timer** tab, the blocked page renders the countdown as a split-flap
 **flip clock**, and the popup's Timer tab shares one timer state with the
-blocked page via `chrome.storage.local["focusguard_timer_state"]`.
+blocked page via `chrome.storage.local["MindfulBrowse_timer_state"]`.
 
 | ID | Case | Steps | Expected |
 |---|---|---|---|
 | `UI-01` | Two-tab popup switching | 1. Open the popup. 2. Click **Timer**, then **Blocklist**, several times. 3. Close the popup on the Timer tab and reopen it. | Exactly one panel is visible at a time; content never overlaps or blanks. The tab buttons expose `role="tab"` with `aria-selected` reflecting the visible panel (inspect the DOM). The last open tab survives close/reopen (persisted in `localStorage`). Arrow Left/Right moves between the two tab buttons when one is focused. |
-| `UI-02` | Popup Timer tab controls | Open the Timer tab and click Start / Pause / Skip / Reset. | The compact flip clock and phase/round readout update for every control (Start begins the countdown, Pause freezes it, Skip advances the phase, Reset restores the full work phase). All writes land in `chrome.storage.local.get(["focusguard_timer_state"])`. |
-| `UI-03` | Popup → blocked page timer sync | 1. In the popup Timer tab, click **Start**. 2. Click **Open full-screen timer**. 3. Watch the new tab. | The blocked page opens already running with the same phase/remaining time the popup showed — both surfaces read the same `focusguard_timer_state` key, so control passes between them without any message passing. Pause from either surface; the other reflects it within ~1s of its next storage event/reload. |
+| `UI-02` | Popup Timer tab controls | Open the Timer tab and click Start / Pause / Skip / Reset. | The compact flip clock and phase/round readout update for every control (Start begins the countdown, Pause freezes it, Skip advances the phase, Reset restores the full work phase). All writes land in `chrome.storage.local.get(["MindfulBrowse_timer_state"])`. |
+| `UI-03` | Popup → blocked page timer sync | 1. In the popup Timer tab, click **Start**. 2. Click **Open full-screen timer**. 3. Watch the new tab. | The blocked page opens already running with the same phase/remaining time the popup showed — both surfaces read the same `MindfulBrowse_timer_state` key, so control passes between them without any message passing. Pause from either surface; the other reflects it within ~1s of its next storage event/reload. |
 | `UI-04` | Blocked page → popup timer sync | 1. Start the timer on the blocked page. 2. Open the popup and switch to the Timer tab while the page keeps running. | The popup flip clock shows the running countdown (live-updating via `chrome.storage.onChanged`) and its Start button reflects the running state. Pausing in the popup pauses the blocked page's timer too. |
 | `UI-05` | Flip clock rendering | On the blocked page, start the timer and watch several ticks including a minute rollover (e.g. `25:00 → 24:59`, and let it reach `24:00` or set a 1–2 min work duration). | Digits render as split-flap cards in Orbitron; on each tick only the digits that actually changed flip (at `25:00 → 24:59` the minutes-tens "2" stays static while the other three flip; at a minute rollover the minute cards flip once, not once per second). No layout shift during flips, and with OS "Reduce motion" enabled the digits swap instantly with no animation. |
 | `UI-07` | Space toggles the timer | 1. On the blocked page with nothing focused (click the background first), press **Space**. 2. Press Space again. | The timer starts then pauses (same as clicking Start). Space never scrolls the page, and is ignored while focus is in a text field or on a button. |
 | `UI-09` | Strip vs Block onboarding | 1. With an empty blocklist, open the Blocklist tab. 2. Add a site and inspect its card. 3. In the card's mode button, cycle it to `block` (friction level 3) and navigate to that domain. | The Blocklist tab shows a static hint explaining that sites start in **Strip** mode and that **Block** mode triggers the full-screen Pomodoro redirect. The new site's card shows mode `strip` by default and does **not** redirect when visited in strip mode; only after switching to `block` (level 3) does navigation redirect to the timer page. |
-| `UI-10` | Minimalist theme + focus outlines | Keyboard-Tab through every control on both surfaces (see `CC-03`) and inspect the stylesheets. | Every keyboard-focused control shows a 2px outline with a 2px offset in the current phase color (shared `--focus-color` token). No surface uses hues beyond the three phase colors plus the semantic error red; the popup footer reads `FocusGuard v1.1.0`, matching `manifest.json`. |
+| `UI-10` | Minimalist theme + focus outlines | Keyboard-Tab through every control on both surfaces (see `CC-03`) and inspect the stylesheets. | Every keyboard-focused control shows a 2px outline with a 2px offset in the current phase color (shared `--focus-color` token). No surface uses hues beyond the three phase colors plus the semantic error red; the popup footer reads `MindfulBrowse v1.1.0`, matching `manifest.json`. |
 
 ---
 

@@ -1,5 +1,5 @@
-/*  ═══════════════════════════════════════════════════════
-    FocusGuard — Friction Rules Tests
+﻿/*  ═══════════════════════════════════════════════════════
+    MindfulBrowse — Friction Rules Tests
     Tests for the friction engine that determines
     intervention behavior based on friction level.
     ═══════════════════════════════════════════════════════ */

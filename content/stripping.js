@@ -1,5 +1,5 @@
-/*  ══════════════════════════════════════════════════════
-    FocusGuard — Content Script (Stripping)
+﻿/*  ══════════════════════════════════════════════════════
+    MindfulBrowse — Content Script (Stripping)
     Injected declaratively on YouTube and Facebook pages.
     Controls stripping by setting html[data-fg-*] attributes
     that gate CSS rules in content/stripping.css.
