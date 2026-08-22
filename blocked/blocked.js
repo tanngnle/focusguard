@@ -105,8 +105,23 @@ document.addEventListener("DOMContentLoaded", async () => {
   try {
     const saved = await chrome.storage.local.get([STORAGE_KEY]);
     const restored = saved[STORAGE_KEY];
-    if (isStateFresh(restored, Date.now())) {
-      timerState = reviveState(restored, settings, Date.now());
+    const now = Date.now();
+    if (isStateFresh(restored, now)) {
+      // Central session rule: a NATURALLY completed work phase ends the
+      // Lock Down session — including one that finished while this tab
+      // was closed. reviveState() advances exactly one phase when the
+      // running deadline already passed; if that phase was work, the
+      // work→break transition clears the session here just like the
+      // live-tick path below does. Manual skip never clears.
+      const revivedPastWorkDeadline =
+        restored.isRunning &&
+        restored.phase === "work" &&
+        restored.endsAt != null &&
+        remainingSeconds(restored, now) <= 0;
+      timerState = reviveState(restored, settings, now);
+      if (revivedPastWorkDeadline) {
+        clearFocusSession();
+      }
     }
   } catch (e) {
     // Not in extension context

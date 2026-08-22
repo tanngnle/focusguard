@@ -58,10 +58,11 @@ const lockdownHeaderStatus = document.getElementById("lockdown-header-status");
 
 // Lock Down session state mirrors the focusSessionActive /
 // focusSessionEndsAt pair in chrome.storage.local. The panel NEVER reads
-// storage.sync copies of those keys (inert v1-migration leftovers) and
-// re-renders from local-area onChanged events, so external writers —
-// the background worker expiring a session, the blocked page clearing
-// one on natural work-phase completion — are reflected live.
+// storage.sync copies of those keys (legacy leftovers from older builds;
+// the migration no longer seeds them) and re-renders from local-area
+// onChanged events, so external writers — the background worker expiring
+// a session, the blocked page clearing one on natural work-phase
+// completion — are reflected live.
 let lockdownSessionActive = false;
 let lockdownSessionEndsAt = null;
 let lockdownTickerHandle = null;
@@ -480,6 +481,16 @@ function renderPopupSessionDots() {
 }
 
 // ── Popup Ticker (repaint only, while running) ──────────
+// Central session rule (shared with blocked.js): a NATURALLY completed
+// work phase ends the Lock Down session; a manual skip never does.
+function clearFocusSession() {
+  try {
+    chrome.storage.local.set({ focusSessionActive: false, focusSessionEndsAt: null });
+  } catch {
+    // Storage unavailable — the background expiry gate is the backstop.
+  }
+}
+
 function armPopupTicker() {
   disarmPopupTicker();
   popupTickerHandle = setInterval(() => {
@@ -496,7 +507,14 @@ function armPopupTicker() {
       // the applied transition disarms/re-arms the ticker as appropriate.
       disarmPopupTicker();
       queueTimerMutation(() =>
-        applyTimerTransition((s) => skip(s, currentSettingsFromSliders(), now))
+        applyTimerTransition((s) => {
+          // Natural work-phase completion clears the Lock Down session
+          // (the source state's phase is authoritative here — it may
+          // differ from the popup's in-memory copy after an external
+          // write).
+          if (s.phase === "work") clearFocusSession();
+          return skip(s, currentSettingsFromSliders(), now);
+        })
       );
       return;
     }
@@ -590,8 +608,11 @@ function renderLockDown() {
   lockdownToggle.classList.toggle("session-active", lockdownSessionActive);
 
   if (lockdownSessionActive) {
-    paintLockDownCountdown();
+    // Arm first, paint second: if the paint discovers the deadline has
+    // already passed it expires the session locally, and the nested
+    // renderLockDown() disarms the ticker again on its inactive branch.
     armLockDownTicker();
+    paintLockDownCountdown();
   } else {
     disarmLockDownTicker();
     if (lockdownHeaderStatus) lockdownHeaderStatus.hidden = true;
@@ -658,6 +679,18 @@ function lockdownRemainingSeconds() {
 }
 
 function paintLockDownCountdown() {
+  // The deadline passed while this popup stayed open (or the adopted
+  // session was already past due): expire locally — flip inactive and
+  // re-render (panel back to idle, cards unlocked). The background
+  // worker's own expiry clear keeps both surfaces convergent; no
+  // storage write needed here.
+  if (lockdownRemainingSeconds() <= 0) {
+    lockdownSessionActive = false;
+    lockdownSessionEndsAt = null;
+    renderLockDown();
+    return;
+  }
+
   const display = formatTime(lockdownRemainingSeconds());
   if (lockdownCountdown) {
     lockdownCountdown.textContent = display;
@@ -760,7 +793,7 @@ async function addSite() {
     return;
   }
 
-  sites.push({ domain, active: true });
+  sites.push({ domain, active: true, restrictionLevel: "strip" });
   suppressNextSitesChange = true;
   const ok = await setStorage({ sites });
   if (!ok) {

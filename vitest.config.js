@@ -8,6 +8,12 @@ export default defineConfig({
     // workers as worker_threads in-process instead and is unaffected —
     // switching avoids the whole class of problem.
     pool: "threads",
+    // Cap worker parallelism for determinism on modest machines: running
+    // every jsdom suite fully in parallel caused CPU-bound load spikes
+    // (the very flakes the timeout below absorbs). Two workers keep
+    // runtime reasonable while leaving headroom. (Vitest 4: the old
+    // poolOptions.threads.maxThreads moved to top-level maxWorkers.)
+    maxWorkers: 2,
     environment: "jsdom",
     // jsdom-based suites are CPU-bound and this machine runs all files in
     // parallel, so the 5s default occasionally times out healthy tests under

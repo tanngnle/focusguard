@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   resetChromeMock,
   triggerNavigation,
@@ -437,6 +437,137 @@ describe("background.js — Lock Down session expiry (#25)", () => {
   });
 });
 
+describe("background.js — ultra-review findings (B1/B2/B3/M2)", () => {
+  beforeEach(() => {
+    resetChromeMock();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // B1 — webNavigation events keep the service worker awake, so the Lock
+  // Down deadline can pass while hydration/onChanged never re-run. The
+  // enforcement path must re-validate the deadline, expire the session, and
+  // fall through to per-site handling instead of redirecting forever.
+  it("B1: an active session whose deadline passes while the worker stays awake does NOT redirect and gets cleared", async () => {
+    vi.useFakeTimers();
+    const t0 = Date.now();
+    await chrome.storage.sync.set({
+      enabled: true,
+      sites: [{ domain: "youtube.com", active: true, restrictionLevel: "strip" }],
+    });
+    await chrome.storage.local.set({
+      focusSessionActive: true,
+      focusSessionEndsAt: t0 + 60000, // valid right now
+    });
+    await loadBackground();
+
+    // While the deadline is still valid, the override redirects.
+    await triggerNavigation({ url: "https://www.youtube.com/", tabId: 4 });
+    expect(chrome.tabs.update).toHaveBeenCalledTimes(1);
+
+    // Time passes the deadline while the worker stays awake.
+    vi.setSystemTime(t0 + 120000);
+
+    // Next navigation re-validates, expires, clears, and falls through to
+    // per-site handling (strip → no redirect).
+    await triggerNavigation({ url: "https://www.youtube.com/", tabId: 4 });
+    expect(chrome.tabs.update).toHaveBeenCalledTimes(1); // no new redirect
+
+    const local = await chrome.storage.local.get(["focusSessionActive", "focusSessionEndsAt"]);
+    expect(local.focusSessionActive).toBe(false);
+    expect(local.focusSessionEndsAt).toBe(null);
+  });
+
+  it("B1: an active non-expired session still redirects at enforcement time", async () => {
+    vi.useFakeTimers();
+    const t0 = Date.now();
+    await chrome.storage.sync.set({
+      enabled: true,
+      sites: [{ domain: "youtube.com", active: true, restrictionLevel: "strip" }],
+    });
+    await chrome.storage.local.set({
+      focusSessionActive: true,
+      focusSessionEndsAt: t0 + 60 * 60000,
+    });
+    await loadBackground();
+
+    vi.setSystemTime(t0 + 30000); // still well before the deadline
+    await triggerNavigation({ url: "https://www.youtube.com/", tabId: 4 });
+
+    expect(chrome.tabs.update).toHaveBeenCalledTimes(1);
+    const [, updateProps] = chrome.tabs.update.mock.calls[0];
+    expect(updateProps.url).toContain("blocked/blocked.html");
+    expect(updateProps.url).toContain("domain=youtube.com");
+  });
+
+  // B2 — a site entry missing restrictionLevel entirely must default to
+  // strip (no redirect), matching the popup's displayed default, instead of
+  // slipping past the early-returns into the hard block.
+  it("B2: a site with no restrictionLevel falls through as strip (no redirect)", async () => {
+    await chrome.storage.sync.set({
+      enabled: true,
+      sites: [{ domain: "reddit.com", active: true }],
+    });
+    await loadBackground();
+
+    await triggerNavigation({ url: "https://reddit.com/", tabId: 1 });
+
+    expect(chrome.tabs.update).not.toHaveBeenCalled();
+  });
+
+  // B3 — friction is delivered by the content-script overlay, which only
+  // injects on youtube.com / facebook.com. On any other domain a friction
+  // site would be completely unenforced, so background falls back to Block.
+  it("B3: friction on an out-of-scope domain (reddit.com) redirects to blocked.html", async () => {
+    await chrome.storage.sync.set({
+      enabled: true,
+      sites: [{ domain: "reddit.com", active: true, restrictionLevel: "friction", frictionDelay: 10 }],
+    });
+    await loadBackground();
+
+    await triggerNavigation({ url: "https://reddit.com/r/all", tabId: 2 });
+
+    expect(chrome.tabs.update).toHaveBeenCalledTimes(1);
+    const [, updateProps] = chrome.tabs.update.mock.calls[0];
+    expect(updateProps.url).toContain("blocked/blocked.html");
+    expect(updateProps.url).toContain("domain=reddit.com");
+  });
+
+  it("B3: friction on an in-scope domain (youtube.com) falls through to the content script", async () => {
+    await chrome.storage.sync.set({
+      enabled: true,
+      sites: [{ domain: "youtube.com", active: true, restrictionLevel: "friction", frictionDelay: 10 }],
+    });
+    await loadBackground();
+
+    await triggerNavigation({ url: "https://www.youtube.com/", tabId: 3 });
+
+    expect(chrome.tabs.update).not.toHaveBeenCalled();
+  });
+
+  // M2 — Lock Down is absolute: it matches listed sites regardless of their
+  // per-site `active` flag.
+  it("M2: focusSessionActive=true redirects even for a site toggled active:false", async () => {
+    await chrome.storage.sync.set({
+      enabled: true,
+      sites: [{ domain: "reddit.com", active: false, restrictionLevel: "strip" }],
+    });
+    await chrome.storage.local.set({
+      focusSessionActive: true,
+      focusSessionEndsAt: Date.now() + 10 * 60000,
+    });
+    await loadBackground();
+
+    await triggerNavigation({ url: "https://reddit.com/", tabId: 6 });
+
+    expect(chrome.tabs.update).toHaveBeenCalledTimes(1);
+    const [, updateProps] = chrome.tabs.update.mock.calls[0];
+    expect(updateProps.url).toContain("blocked/blocked.html");
+    expect(updateProps.url).toContain("domain=reddit.com");
+  });
+});
+
 describe("background.js — onInstalled seeding (A2 regression)", () => {
   beforeEach(() => {
     resetChromeMock();
@@ -457,8 +588,10 @@ describe("background.js — onInstalled seeding (A2 regression)", () => {
       roundsBeforeLong: 4,
     });
     expect(data.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
-    expect(data.focusSessionActive).toBe(false);
-    expect(data.focusSessionEndsAt).toBe(null);
+    // Session keys live only in chrome.storage.local — never seeded into
+    // sync (M5).
+    expect(data.focusSessionActive).toBeUndefined();
+    expect(data.focusSessionEndsAt).toBeUndefined();
     expect(data.proLicense).toBe(null);
   });
 
@@ -503,8 +636,6 @@ describe("background.js — onInstalled seeding (A2 regression)", () => {
       sites: [...BUILTIN_SITES],
       pomodoroSettings: { workDuration: 25, shortBreak: 5, longBreak: 15, roundsBeforeLong: 4 },
       schemaVersion: CURRENT_SCHEMA_VERSION,
-      focusSessionActive: false,
-      focusSessionEndsAt: null,
       proLicense: null,
     });
     await loadBackground();
