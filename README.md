@@ -33,9 +33,7 @@ When you're redirected to the timer page, the countdown is rendered as a
 split-flap **flip clock** in a minimalist dark theme (near-black surfaces,
 hairline borders, and the three phase colors as the only accents). Controls
 let you start/pause, reset, or skip to the next phase, and **Space** toggles
-the timer from anywhere on the page. A floating 🐼 button opens Bao, an
-on-device AI panda who comments on your attempts to negotiate; **Escape** or
-the minimized timer strip closes the chat again.
+the timer from anywhere on the page.
 
 **Pomodoro settings**, adjustable via sliders in the popup's Timer tab:
 

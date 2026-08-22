@@ -238,8 +238,8 @@ body {
 }
 
 /* Phase B — the flip clock renders the digits now; this span is kept
-   (visually hidden) exactly as before because it backs
-   window.__focusguardTimer.getDisplay() and the timer strip. */
+   (visually hidden) as the canonical text readout that the flip clock
+   mirrors. */
 .timer-digits {
   position: absolute;
   width: 1px;
@@ -431,7 +431,7 @@ body.phase-long-break {
 /* ── Focus Visibility ─────────────── */
 /* Keyboard focus only (:focus-visible) — mouse clicks on the round
    controls must not leave a ring. 2px outline, 2px offset, shared
-   token, same as popup.css and blocked-chat.css. */
+   token, same as popup.css. */
 .btn-control:focus-visible {
   outline: 2px solid var(--focus-color);
   outline-offset: 2px;

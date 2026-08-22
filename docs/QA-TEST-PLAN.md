@@ -19,7 +19,6 @@ The four bugs and their regression IDs:
 | `chrome.storage.sync` write-quota exhaustion (120 writes/min) from dragging a settings slider | `SET-05` |
 | Wrong-site deletion race when deleting two sites in quick succession | `CRUD-09` |
 | CSP-blocked inline event handler (MV3's default CSP silently blocks `onclick="…"` attributes — the control looks dead, no visible error unless the console is open) | `CC-05` |
-| Chat overlay permanently covering the blocked page (the Bao overlay rendered full-viewport with no close mechanism, so Start/Pause/Reset/Skip were unreachable; fixed in v1.1.0 by hiding it behind a launcher) | `UI-06` |
 
 ---
 
@@ -200,13 +199,12 @@ Tip: For any case requiring a full phase or cycle, first set short durations in 
 
 ---
 
-## 8. Two-Tab Popup, Flip Clock & Chat Overlay (v1.1.0 UI)
+## 8. Two-Tab Popup & Flip Clock (v1.1.0 UI)
 
 Covers the v1.1.0 redesign: the popup is segmented into a **Blocklist** tab
 and a **Timer** tab, the blocked page renders the countdown as a split-flap
-**flip clock**, the Bao chat overlay is hidden behind a floating launcher,
-and the popup's Timer tab shares one timer state with the blocked page via
-`chrome.storage.local["focusguard_timer_state"]`.
+**flip clock**, and the popup's Timer tab shares one timer state with the
+blocked page via `chrome.storage.local["focusguard_timer_state"]`.
 
 | ID | Case | Steps | Expected |
 |---|---|---|---|
@@ -215,9 +213,7 @@ and the popup's Timer tab shares one timer state with the blocked page via
 | `UI-03` | Popup → blocked page timer sync | 1. In the popup Timer tab, click **Start**. 2. Click **Open full-screen timer**. 3. Watch the new tab. | The blocked page opens already running with the same phase/remaining time the popup showed — both surfaces read the same `focusguard_timer_state` key, so control passes between them without any message passing. Pause from either surface; the other reflects it within ~1s of its next storage event/reload. |
 | `UI-04` | Blocked page → popup timer sync | 1. Start the timer on the blocked page. 2. Open the popup and switch to the Timer tab while the page keeps running. | The popup flip clock shows the running countdown (live-updating via `chrome.storage.onChanged`) and its Start button reflects the running state. Pausing in the popup pauses the blocked page's timer too. |
 | `UI-05` | Flip clock rendering | On the blocked page, start the timer and watch several ticks including a minute rollover (e.g. `25:00 → 24:59`, and let it reach `24:00` or set a 1–2 min work duration). | Digits render as split-flap cards in Orbitron; on each tick only the digits that actually changed flip (at `25:00 → 24:59` the minutes-tens "2" stays static while the other three flip; at a minute rollover the minute cards flip once, not once per second). No layout shift during flips, and with OS "Reduce motion" enabled the digits swap instantly with no animation. |
-| `UI-06` — **chat overlay regression (PRIMARY BUG)** | Chat launcher open/close | 1. On the blocked page, confirm the timer controls are clickable immediately (no overlay covering them). 2. Click the floating 🐼 button (bottom-right). 3. Click the minimized timer strip at the top of the overlay. 4. Reopen and try the chat input. | The overlay is hidden at load; the launcher opens it (focus moves to the chat input); the timer strip closes it again. While closed, Start/Pause/Reset/Skip all respond to clicks. The timer strip keeps live-updating while the overlay is open. |
-| `UI-07` | Space toggles the timer | 1. On the blocked page with nothing focused (click the background first), press **Space**. 2. Press Space again. 3. Open the chat overlay via the launcher and press Space with the chat input focused. | Steps 1–2: timer starts then pauses (same as clicking Start). Step 3: nothing happens — Space is ignored while typing in the chat input or while the overlay is open. Space also never scrolls the page. |
-| `UI-08` | Escape closes the chat | Open the chat overlay via the launcher, then press **Escape**. | The overlay closes and focus returns to the launcher button. Pressing Escape while the overlay is already closed does nothing. |
+| `UI-07` | Space toggles the timer | 1. On the blocked page with nothing focused (click the background first), press **Space**. 2. Press Space again. | The timer starts then pauses (same as clicking Start). Space never scrolls the page, and is ignored while focus is in a text field or on a button. |
 | `UI-09` | Strip vs Block onboarding | 1. With an empty blocklist, open the Blocklist tab. 2. Add a site and inspect its card. 3. In the card's mode button, cycle it to `block` (friction level 3) and navigate to that domain. | The Blocklist tab shows a static hint explaining that sites start in **Strip** mode and that **Block** mode triggers the full-screen Pomodoro redirect. The new site's card shows mode `strip` by default and does **not** redirect when visited in strip mode; only after switching to `block` (level 3) does navigation redirect to the timer page. |
 | `UI-10` | Minimalist theme + focus outlines | Keyboard-Tab through every control on both surfaces (see `CC-03`) and inspect the stylesheets. | Every keyboard-focused control shows a 2px outline with a 2px offset in the current phase color (shared `--focus-color` token). No surface uses hues beyond the three phase colors plus the semantic error red; the popup footer reads `FocusGuard v1.1.0`, matching `manifest.json`. |
 
@@ -243,7 +239,6 @@ Full execution of all ~50 cases above is expensive; run this subset every releas
 6. `INST-02` — upgrade never clobbers an existing site list
 7. `BLK-01`, `BLK-02`, `BLK-05` — exact match, subdomain match, and the "contains but isn't a subdomain" non-match (the core matching correctness the whole extension depends on)
 8. `BLK-10`, `BLK-11` — master toggle and per-site toggle both actually gate blocking
-9. `UI-06` — chat overlay must not cover the timer controls (v1.1.0 regression)
-10. `UI-03`, `UI-04` — popup ↔ blocked page stay in agreement on the shared timer state
+9. `UI-03`, `UI-04` — popup ↔ blocked page stay in agreement on the shared timer state
 
-If all ten pass with a clean console, the release is safe to ship pending the rest of the suite at normal cadence (e.g. before a major version bump, or after any change touching `background.js`, `lib/matcher.js`, `lib/domain.js`, or the storage schema).
+If all nine pass with a clean console, the release is safe to ship pending the rest of the suite at normal cadence (e.g. before a major version bump, or after any change touching `background.js`, `lib/matcher.js`, `lib/domain.js`, or the storage schema).

@@ -721,8 +721,7 @@ body {
 
 /* ── Focus Visibility ─────────────── */
 /* Every interactive element: 2px outline, 2px offset, shared token
-   (--focus-color, see shared/theme.css). Consistent with blocked.css
-   and blocked-chat.css. */
+   (--focus-color, see shared/theme.css). Consistent with blocked.css. */
 .btn-add:focus-visible,
 .btn-delete:focus-visible,
 .settings-toggle:focus-visible,
