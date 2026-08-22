@@ -552,6 +552,147 @@ describe("popup.js — Lock Down panel (#25)", () => {
   });
 });
 
+describe("popup.js — Lock Down disabled site cards (#26)", () => {
+  beforeEach(() => {
+    ensureLocalStorage();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    window.localStorage.clear();
+  });
+
+  // Mixed list: both built-ins (one strip → has element toggles, one
+  // friction) plus a user-added site, covering every card variant.
+  const MIXED_SITES = [
+    { domain: "youtube.com", active: true, restrictionLevel: "strip" },
+    { domain: "facebook.com", active: true, restrictionLevel: "friction", frictionDelay: 15 },
+    { domain: "twitter.com", active: true, restrictionLevel: "block" },
+  ];
+
+  function cards() {
+    return [...document.querySelectorAll(".site-card")];
+  }
+
+  function expectCardsLocked() {
+    const all = cards();
+    expect(all.length).toBe(MIXED_SITES.length);
+    for (const card of all) {
+      expect(card.classList.contains("lockdown")).toBe(true);
+      const badge = card.querySelector(".lockdown-badge");
+      expect(badge).toBeTruthy();
+      expect(badge.textContent).toContain("Lock Down");
+      expect(card.querySelector(".restriction-select").disabled).toBe(true);
+      expect(card.querySelector(".site-toggle input").disabled).toBe(true);
+    }
+    // Element checkboxes (strip-mode built-in) are disabled too.
+    const elementCheckboxes = document.querySelectorAll(
+      '.site-card[data-domain="youtube.com"] .element-toggle input'
+    );
+    expect(elementCheckboxes.length).toBeGreaterThan(0);
+    elementCheckboxes.forEach((cb) => expect(cb.disabled).toBe(true));
+    // User-site delete button is inert as well.
+    expect(
+      document.querySelector('.site-card[data-domain="twitter.com"] .btn-delete').disabled
+    ).toBe(true);
+    // The master toggle MUST stay functional during Lock Down.
+    expect(document.getElementById("master-toggle-input").disabled).toBe(false);
+  }
+
+  function expectCardsInteractive() {
+    const all = cards();
+    expect(all.length).toBe(MIXED_SITES.length);
+    for (const card of all) {
+      expect(card.classList.contains("lockdown")).toBe(false);
+      expect(card.querySelector(".lockdown-badge")).toBeNull();
+      expect(card.querySelector(".restriction-select").disabled).toBe(false);
+      expect(card.querySelector(".site-toggle input").disabled).toBe(false);
+    }
+    document
+      .querySelectorAll('.site-card[data-domain="youtube.com"] .element-toggle input')
+      .forEach((cb) => expect(cb.disabled).toBe(false));
+    expect(
+      document.querySelector('.site-card[data-domain="twitter.com"] .btn-delete').disabled
+    ).toBe(false);
+    expect(document.getElementById("master-toggle-input").disabled).toBe(false);
+  }
+
+  it("with an active session, built-in and user cards show the lock badge and all per-site controls are disabled; master toggle stays enabled", async () => {
+    await mountPopup(
+      { enabled: true, sites: MIXED_SITES },
+      { focusSessionActive: true, focusSessionEndsAt: Date.now() + 300_000 }
+    );
+
+    expectCardsLocked();
+  });
+
+  it("without an active session (flag absent), every card is fully interactive with no lock badge", async () => {
+    await mountPopup({ enabled: true, sites: MIXED_SITES });
+
+    expectCardsInteractive();
+  });
+
+  it("with focusSessionActive false in storage.local, cards remain fully interactive", async () => {
+    await mountPopup(
+      { enabled: true, sites: MIXED_SITES },
+      { focusSessionActive: false, focusSessionEndsAt: null }
+    );
+
+    expectCardsInteractive();
+  });
+
+  it("reacts live to storage.local onChanged: an external start locks the cards, an external clear unlocks them — no reload", async () => {
+    await mountPopup({ enabled: true, sites: MIXED_SITES });
+    expectCardsInteractive();
+
+    // External start (e.g. another surface arms the session).
+    await chrome.storage.local.set({
+      focusSessionActive: true,
+      focusSessionEndsAt: Date.now() + 125_000,
+    });
+    await flushMicrotasks();
+    expectCardsLocked();
+
+    // External clear — the background worker's expiry rewrite shape.
+    await chrome.storage.local.set({ focusSessionActive: false, focusSessionEndsAt: null });
+    await flushMicrotasks();
+    expectCardsInteractive();
+  });
+
+  it("STOP restores fully interactive cards immediately", async () => {
+    await mountPopup(
+      { enabled: true, sites: MIXED_SITES },
+      { focusSessionActive: true, focusSessionEndsAt: Date.now() + 300_000 }
+    );
+    expectCardsLocked();
+
+    document.getElementById("lockdown-stop-btn").click();
+    await flushMicrotasks();
+    expectCardsInteractive();
+  });
+
+  it("cards added or re-rendered mid-session are locked from the moment they appear", async () => {
+    await mountPopup(
+      { enabled: true, sites: MIXED_SITES },
+      { focusSessionActive: true, focusSessionEndsAt: Date.now() + 300_000 }
+    );
+
+    // External sites write re-renders the whole card list mid-session.
+    const nextSites = [...MIXED_SITES, { domain: "reddit.com", active: true }];
+    await chrome.storage.sync.set({ sites: nextSites });
+    await flushMicrotasks();
+
+    const redditCard = document.querySelector('.site-card[data-domain="reddit.com"]');
+    expect(redditCard).toBeTruthy();
+    expect(redditCard.classList.contains("lockdown")).toBe(true);
+    expect(redditCard.querySelector(".lockdown-badge")).toBeTruthy();
+    expect(redditCard.querySelector(".restriction-select").disabled).toBe(true);
+    expect(redditCard.querySelector(".site-toggle input").disabled).toBe(true);
+    // Master toggle still functional.
+    expect(document.getElementById("master-toggle-input").disabled).toBe(false);
+  });
+});
+
 describe("popup.js — tabs", () => {
   beforeEach(() => {
     ensureLocalStorage();
